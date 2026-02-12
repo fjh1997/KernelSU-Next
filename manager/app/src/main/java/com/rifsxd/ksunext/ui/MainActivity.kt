@@ -216,6 +216,9 @@ class MainActivity : ComponentActivity() {
                 val isScrollingDown = remember { mutableStateOf(false) }
                 val scrollOffset = remember { mutableStateOf(0f) }
                 val previousScrollOffset = remember { mutableStateOf(0f) }
+                
+                // Remember the last valid navbar selection (persists across navbar hide/show)
+                val lastValidNavbarSelection = remember { mutableStateOf(0) }
 
                 LaunchedEffect(zipUri, navigateLoc, moduleActionId) {
                     if (moduleActionId != null) {
@@ -367,7 +370,7 @@ class MainActivity : ComponentActivity() {
                             enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                             exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
                         ) {
-                            BottomBar(navController)
+                            BottomBar(navController, lastValidNavbarSelection)
                         }
                     }
                 }
@@ -416,7 +419,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun BottomBar(navController: NavHostController) {
+private fun BottomBar(
+    navController: NavHostController,
+    lastValidSelection: MutableState<Int>
+) {
     val navigator = navController.rememberDestinationsNavigator()
     val isManager = Natives.isManager
     val fullFeatured = isManager && !Natives.requireNewKernel() && rootAvailable()
@@ -430,11 +436,19 @@ private fun BottomBar(navController: NavHostController) {
     val currentRoute = currentBackStackEntry?.destination?.route
     val selectedIndex = visibleDestinations.indexOfFirst {
         it.direction.route == currentRoute
-    }.coerceAtLeast(0)
+    }
+    
+    // Update last valid selection when on a navbar destination
+    if (selectedIndex != -1) {
+        lastValidSelection.value = selectedIndex
+    }
+    
+    // Use current selection if on navbar, otherwise use last valid selection
+    val effectiveSelectedIndex = if (selectedIndex != -1) selectedIndex else lastValidSelection.value
     
     // Animate the indicator position with jelly/spring effect
     val animatedSelectedIndex by animateFloatAsState(
-        targetValue = selectedIndex.toFloat(),
+        targetValue = effectiveSelectedIndex.toFloat(),
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessLow
@@ -529,53 +543,40 @@ private fun BottomBar(navController: NavHostController) {
                         }
                         
                         // Navigation items
-                        val startDirection = visibleDestinations.firstOrNull()?.direction
                         Row(
                             modifier = Modifier.fillMaxSize(),
                             horizontalArrangement = Arrangement.spacedBy(itemSpacing),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            visibleDestinations.forEach { destination ->
-                                    // Determine selection by comparing the destination's route to the current route
-                                    val isCurrentDestOnBackStack = destination.direction.route == currentRoute
+                            visibleDestinations.forEachIndexed { index, destination ->
+                                    // Determine selection by checking if this is the effective selected index
+                                    val isSelected = index == effectiveSelectedIndex
                                 
                                 Box(
                                     modifier = Modifier
                                         .size(itemSize)
                                         .clip(MaterialTheme.shapes.large)
                                         .clickable {
-                                            // If already on Home, do nothing to avoid duplicate opens
-                                            if (destination == BottomBarDestination.Home &&
-                                                currentRoute == HomeScreenDestination.route) {
-                                                return@clickable
-                                            }
+                                            // If already on this destination, do nothing to avoid reopening
+                                            if (destination.direction.route == currentRoute) return@clickable
 
-                                            // Ensure Home always goes to the Home destination and
-                                            // doesn't get affected by any saved/shortcut state.
-                                            if (destination == BottomBarDestination.Home) {
-                                                navigator.navigate(HomeScreenDestination) {
-                                                    popUpTo(NavGraphs.root) {
-                                                        saveState = false
-                                                    }
-                                                    launchSingleTop = true
-                                                    restoreState = false
+                                            // Always recreate the destination to avoid keeping saved state
+                                            // which reduces memory usage by closing old destinations.
+                                            navigator.navigate(destination.direction) {
+                                                popUpTo(destination.direction) {
+                                                    inclusive = true
+                                                    saveState = false
                                                 }
-                                            } else {
-                                                navigator.navigate(destination.direction) {
-                                                    popUpTo(startDirection ?: NavGraphs.root) {
-                                                        saveState = true
-                                                    }
-                                                    launchSingleTop = true
-                                                    restoreState = true
-                                                }
+                                                launchSingleTop = true
+                                                restoreState = false
                                             }
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
-                                        if (isCurrentDestOnBackStack) destination.iconSelected else destination.iconNotSelected,
+                                        if (isSelected) destination.iconSelected else destination.iconNotSelected,
                                         stringResource(destination.label),
-                                        tint = if (isCurrentDestOnBackStack) {
+                                        tint = if (isSelected) {
                                             MaterialTheme.colorScheme.onSecondaryContainer
                                         } else {
                                             MaterialTheme.colorScheme.onSurfaceVariant
