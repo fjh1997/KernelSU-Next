@@ -40,6 +40,7 @@ import androidx.navigation.compose.rememberNavController
 import com.ramcosta.composedestinations.DestinationsNavHost
 import com.ramcosta.composedestinations.animations.NavHostAnimatedDestinationStyle
 import com.ramcosta.composedestinations.generated.NavGraphs
+import com.ramcosta.composedestinations.generated.destinations.HomeScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.ExecuteModuleActionScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.FlashScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.ModuleScreenDestination
@@ -144,7 +145,8 @@ fun Modifier.trackScroll(
 class MainActivity : ComponentActivity() {
 
     var zipUri by mutableStateOf<ArrayList<Uri>?>(null)
-    var navigateLoc by mutableStateOf("")
+    enum class NavigateLocation { SUPERUSER, MODULES, SETTINGS }
+    var navigateLoc by mutableStateOf<NavigateLocation?>(null)
     var moduleActionId by mutableStateOf<String?>(null)
     var amoledModeState = mutableStateOf(false)
     private val handler = Handler(Looper.getMainLooper())
@@ -235,20 +237,14 @@ class MainActivity : ComponentActivity() {
                         zipUri = null
                     }
 
-                    if(zipUri.isNullOrEmpty() && navigateLoc != "")
-                    {
-                        when(navigateLoc) {
-                            "superuser" -> {
-                                navigator.navigate(SuperUserScreenDestination)
-                            }
-                            "modules" -> {
-                                navigator.navigate(ModuleScreenDestination)
-                            }
-                            "settings" -> {
-                                navigator.navigate(SettingScreenDestination)
-                            }
+                    if (zipUri.isNullOrEmpty() && navigateLoc != null) {
+                        when (navigateLoc) {
+                            NavigateLocation.SUPERUSER -> navigator.navigate(SuperUserScreenDestination)
+                            NavigateLocation.MODULES -> navigator.navigate(ModuleScreenDestination)
+                            NavigateLocation.SETTINGS -> navigator.navigate(SettingScreenDestination)
+                            null -> { /* no-op for exhaustiveness */ }
                         }
-                        navigateLoc = ""
+                        navigateLoc = null
                     }
                 }
 
@@ -411,9 +407,10 @@ class MainActivity : ComponentActivity() {
                         }
             }
 
-            "ACTION_SETTINGS" -> navigateLoc = "settings"
-            "ACTION_SUPERUSER" -> navigateLoc = "superuser"
-            "ACTION_MODULES" -> navigateLoc = "modules"
+            "ACTION_SETTINGS" -> navigateLoc = NavigateLocation.SETTINGS
+            "ACTION_SUPERUSER" -> navigateLoc = NavigateLocation.SUPERUSER
+            "ACTION_MODULES" -> navigateLoc = NavigateLocation.MODULES
+            else -> { /* ignore other actions */ }
         }
     }
 }
@@ -428,8 +425,11 @@ private fun BottomBar(navController: NavHostController) {
     val visibleDestinations = remember(fullFeatured) {
         BottomBarDestination.entries.filter { fullFeatured || !it.rootRequired }
     }
-    val selectedIndex = visibleDestinations.indexOfFirst { 
-        navController.isRouteOnBackStackAsState(it.direction).value 
+    // Use the current back stack entry's route as the single source of truth
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = currentBackStackEntry?.destination?.route
+    val selectedIndex = visibleDestinations.indexOfFirst {
+        it.direction.route == currentRoute
     }.coerceAtLeast(0)
     
     // Animate the indicator position with jelly/spring effect
@@ -529,28 +529,39 @@ private fun BottomBar(navController: NavHostController) {
                         }
                         
                         // Navigation items
+                        val startDirection = visibleDestinations.firstOrNull()?.direction
                         Row(
                             modifier = Modifier.fillMaxSize(),
                             horizontalArrangement = Arrangement.spacedBy(itemSpacing),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             visibleDestinations.forEach { destination ->
-                                val isCurrentDestOnBackStack by navController.isRouteOnBackStackAsState(destination.direction)
+                                    // Determine selection by comparing the destination's route to the current route
+                                    val isCurrentDestOnBackStack = destination.direction.route == currentRoute
                                 
                                 Box(
                                     modifier = Modifier
                                         .size(itemSize)
                                         .clip(MaterialTheme.shapes.large)
                                         .clickable {
-                                            if (isCurrentDestOnBackStack) {
-                                                navigator.popBackStack(destination.direction, false)
-                                            }
-                                            navigator.navigate(destination.direction) {
-                                                popUpTo(NavGraphs.root) {
-                                                    saveState = true
+                                            // Ensure Home always goes to the Home destination and
+                                            // doesn't get affected by any saved/shortcut state.
+                                            if (destination == BottomBarDestination.Home) {
+                                                navigator.navigate(HomeScreenDestination) {
+                                                    popUpTo(NavGraphs.root) {
+                                                        saveState = false
+                                                    }
+                                                    launchSingleTop = true
+                                                    restoreState = false
                                                 }
-                                                launchSingleTop = true
-                                                restoreState = true
+                                            } else {
+                                                navigator.navigate(destination.direction) {
+                                                    popUpTo(startDirection ?: NavGraphs.root) {
+                                                        saveState = true
+                                                    }
+                                                    launchSingleTop = true
+                                                    restoreState = true
+                                                }
                                             }
                                         },
                                     contentAlignment = Alignment.Center
