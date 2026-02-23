@@ -200,7 +200,10 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                             ) { checked ->
                                 val shouldEnable = !checked
+                                val prefsLocal = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
                                 if (Natives.setSuEnabled(shouldEnable)) {
+                                    execKsud("feature save", true)
+                                    prefsLocal.edit { putInt("su_compat_mode", if (shouldEnable) 0 else 2) }
                                     isSuDisabled = !shouldEnable
                                 }
                             }
@@ -221,7 +224,10 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                             ) { checked ->
                                 val shouldEnable = !checked
+                                val prefsLocal = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
                                 if (Natives.setKernelUmountEnabled(shouldEnable)) {
+                                    execKsud("feature save", true)
+                                    prefsLocal.edit { putInt("kernel_umount_mode", if (shouldEnable) 0 else 2) }
                                     isKernelUmountDisabled = !shouldEnable
                                 }
                             }
@@ -243,7 +249,10 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                                 colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                             ) { checked ->
                                 val shouldEnable = !checked
+                                val prefsLocal = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
                                 if (Natives.setAvcSpoofEnabled(shouldEnable)) {
+                                    execKsud("feature save", true)
+                                    prefsLocal.edit { putInt("avc_spoof_mode", if (shouldEnable) 0 else 2) }
                                     isAvcSpoofDisabled = !shouldEnable
                                 }
                             }
