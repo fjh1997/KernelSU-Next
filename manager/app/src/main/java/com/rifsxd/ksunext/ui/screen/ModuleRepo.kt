@@ -724,9 +724,10 @@ private fun ModuleRepoCard(
 
                     Button(
                         onClick = { onDownload(module) },
-                        modifier = Modifier.height(40.dp),
+                        modifier = Modifier.defaultMinSize(52.dp, 32.dp),
                         enabled = module.downloadUrl.isNotEmpty() && isInstallEnabled,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                        shape = ButtonDefaults.textShape,
+                        contentPadding = ButtonDefaults.TextButtonContentPadding
                     ) {
                         if (isDownloading) {
                             CircularProgressIndicator(
@@ -738,11 +739,16 @@ private fun ModuleRepoCard(
                             Icon(
                                 imageVector = Icons.Default.CloudDownload,
                                 contentDescription = "Download",
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.install))
+                        Spacer(modifier = Modifier.width(7.dp))
+                        Text(
+                            modifier = Modifier.padding(start = 0.dp),
+                            text = stringResource(R.string.install),
+                            fontFamily = MaterialTheme.typography.labelMedium.fontFamily,
+                            fontSize = MaterialTheme.typography.labelMedium.fontSize
+                        )
                     }
                 }
             }
