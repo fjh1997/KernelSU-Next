@@ -116,6 +116,8 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                 }
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 116.dp)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
 
             val context = LocalContext.current
@@ -158,7 +160,6 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp),
                 ) {
                     Column(
                         modifier = Modifier.padding(12.dp),
@@ -253,7 +254,6 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp),
                 ) {
                     Column(
                         modifier = Modifier.padding(12.dp),
@@ -334,19 +334,17 @@ fun SettingScreen(navigator: DestinationsNavigator) {
                     }
                 }
 
-                Spacer(Modifier.height(2.dp))
+                
             }
 
             val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
 
                     var checkUpdate by rememberSaveable {
