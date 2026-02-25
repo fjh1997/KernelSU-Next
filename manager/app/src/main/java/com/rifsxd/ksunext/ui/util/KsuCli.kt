@@ -417,6 +417,20 @@ fun flashAnyKernelZip(
     val destDirFile = File(ksuApp.cacheDir, "anykernel3_${timestamp}")
     val destDir = destDirFile.absolutePath
 
+    // Validate that the zip contains the required META-INF installer script
+    val hasInstaller = runCatching {
+        java.util.zip.ZipFile(tmpFile).use { zip ->
+            zip.getEntry("META-INF/com/google/android/update-binary") != null
+        }
+    }.getOrDefault(false)
+
+    if (!hasInstaller) {
+        tmpFile.delete()
+        val errMsg = "Invalid AnyKernel3 zip: META-INF/com/google/android/update-binary not found!"
+        onStderr(errMsg)
+        return FlashResult(1, "", false)
+    }
+
     val cmd = """
                 mkdir -p '$destDir' && \
                 $BUSYBOX unzip -p -o '$destZip' "META-INF/com/google/android/update-binary" > '$destDir/update-binary' 2>/dev/null && \
