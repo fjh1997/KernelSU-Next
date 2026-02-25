@@ -140,7 +140,7 @@ fun HomeScreen(navigator: DestinationsNavigator) {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             val lkmMode = ksuVersion?.let {
-                if (kernelVersion.isGKI()) Natives.isLkmMode else null
+                Natives.isLkmMode
             }
 
             StatusCard(kernelVersion, ksuVersion, lkmMode, ksuVersionTag = ksuVersionTag) {
@@ -155,10 +155,14 @@ fun HomeScreen(navigator: DestinationsNavigator) {
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Box(modifier = Modifier.weight(1f)) {
-                        SuperuserCard()
+                        SuperuserCard(onClick = {
+                            navigator.navigate(SuperUserScreenDestination)
+                        })
                     }
                     Box(modifier = Modifier.weight(1f)) {
-                        ModuleCard()
+                        ModuleCard(onClick = {
+                            navigator.navigate(ModuleScreenDestination)
+                        })
                     }
                 }
             }
