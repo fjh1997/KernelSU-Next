@@ -590,8 +590,13 @@ fun UninstallItem(
                     when (uninstallType) {
                         UninstallType.TEMPORARY -> {
                             withContext(Dispatchers.IO) {
-                                Natives.prepareUnload()
-                                withNewRootShell {
+                                // 1. Get root shell BEFORE closing driver fd
+                                withNewRootShell(globalMnt = true) {
+                                    // 2. Notify kernel we're about to unload
+                                    Natives.prepareUnload()
+                                    // 3. Close our driver fd so module refcount drops
+                                    Natives.closeDriverFd()
+                                    // 4. Now rmmod from the already-root shell
                                     newJob().add("rmmod kernelsu").exec()
                                 }
                             }
