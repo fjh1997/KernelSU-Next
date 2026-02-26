@@ -140,7 +140,9 @@ jobs:
           cp -f ../x86_64-linux-android/release/ksud ../manager/app/src/main/jniLibs/x86_64/libksud.so
 
       - name: Build with Gradle
-        run: ./gradlew clean assembleRelease
+        run: |
+          chmod +x ./gradlew
+          ./gradlew clean assembleRelease
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v5
