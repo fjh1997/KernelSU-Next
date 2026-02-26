@@ -596,8 +596,33 @@ fun UninstallItem(
                                     Natives.prepareUnload()
                                     // 3. Close our driver fd so module refcount drops
                                     Natives.closeDriverFd()
-                                    // 4. Now rmmod from the already-root shell
-                                    newJob().add("rmmod kernelsu").exec()
+                                    // 4. Kill other processes holding ksu_driver fds
+                                    //    (e.g. zn-daemon), then daemonize rmmod.
+                                    //    The root shell's stdin/stdout/stderr are
+                                    //    file wrappers with .owner=THIS_MODULE, so
+                                    //    we must exit the shell to release them.
+                                    //    The background process closes its inherited
+                                    //    wrapper fds, sleeps to let the shell exit,
+                                    //    then runs rmmod.
+                                    newJob().add(
+                                        """
+                                        # Kill processes holding ksu_driver fds (except ourselves)
+                                        for pid_dir in /proc/[0-9]*; do
+                                          pid=${'$'}(basename "${'$'}pid_dir")
+                                          [ "${'$'}pid" = "$$" ] && continue
+                                          for fd_path in "${'$'}pid_dir"/fd/*; do
+                                            target=${'$'}(readlink "${'$'}fd_path" 2>/dev/null)
+                                            case "${'$'}target" in *ksu_driver*)
+                                              kill -9 "${'$'}pid" 2>/dev/null
+                                              break
+                                            ;; esac
+                                          done
+                                        done
+                                        # Daemonize: close inherited wrapper fds, wait for
+                                        # parent shell to exit (releasing its wrappers), rmmod
+                                        setsid sh -c 'exec 0</dev/null 1>/dev/null 2>/dev/null; sleep 2; rmmod kernelsu' &
+                                        """.trimIndent()
+                                    ).exec()
                                 }
                             }
                         }

@@ -286,6 +286,8 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 static ssize_t (*orig_read)(struct file *, char __user *, size_t, loff_t *);
 static ssize_t (*orig_read_iter)(struct kiocb *, struct iov_iter *);
 static struct file_operations fops_proxy;
+static const struct file_operations *orig_rc_fops;
+static struct file *hooked_rc_file;
 static ssize_t ksu_rc_pos = 0;
 const size_t ksu_rc_len = sizeof(KERNEL_SU_RC) - 1;
 
@@ -429,6 +431,8 @@ static void ksu_handle_sys_read(unsigned int fd)
 		fops_proxy.read_iter = read_iter_proxy;
 	}
 	// replace the file_operations
+	orig_rc_fops = file->f_op;
+	hooked_rc_file = get_file(file);
 	file->f_op = &fops_proxy;
 
 skip:
@@ -690,6 +694,13 @@ void ksu_ksud_init()
 
 void ksu_ksud_exit()
 {
+	/* Restore init.rc's original fops before module memory is freed */
+	if (hooked_rc_file) {
+		hooked_rc_file->f_op = orig_rc_fops;
+		fput(hooked_rc_file);
+		hooked_rc_file = NULL;
+	}
+
 	/* Flush pending work items first so they don't race with us */
 	flush_work(&stop_init_rc_hook_work);
 	flush_work(&stop_execve_hook_work);
