@@ -579,9 +579,6 @@ fun UninstallItem(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val uninstallConfirmDialog = rememberConfirmDialog()
-    val showTodo = {
-        Toast.makeText(context, "TODO", Toast.LENGTH_SHORT).show()
-    }
     val uninstallDialog = rememberUninstallDialog { uninstallType ->
         scope.launch {
             val result = uninstallConfirmDialog.awaitConfirm(
@@ -591,7 +588,14 @@ fun UninstallItem(
             if (result == ConfirmResult.Confirmed) {
                 withLoading {
                     when (uninstallType) {
-                        UninstallType.TEMPORARY -> showTodo()
+                        UninstallType.TEMPORARY -> {
+                            withContext(Dispatchers.IO) {
+                                Natives.prepareUnload()
+                                withNewRootShell {
+                                    newJob().add("rmmod kernelsu").exec()
+                                }
+                            }
+                        }
                         UninstallType.PERMANENT -> navigator.navigate(
                             FlashScreenDestination(FlashIt.FlashUninstall)
                         )
@@ -647,11 +651,13 @@ enum class UninstallType(val title: Int, val message: Int, val icon: ImageVector
 @Composable
 fun rememberUninstallDialog(onSelected: (UninstallType) -> Unit): DialogHandle {
     return rememberCustomDialog { dismiss ->
-        val options = listOf(
-            // UninstallType.TEMPORARY,
-            UninstallType.PERMANENT,
-            UninstallType.RESTORE_STOCK_IMAGE
-        )
+        val options = buildList {
+            if (Natives.isLkmMode) {
+                add(UninstallType.TEMPORARY)
+            }
+            add(UninstallType.PERMANENT)
+            add(UninstallType.RESTORE_STOCK_IMAGE)
+        }
         val listOptions = options.map {
             ListOption(
                 titleText = stringResource(it.title),

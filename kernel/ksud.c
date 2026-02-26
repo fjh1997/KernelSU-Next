@@ -17,6 +17,7 @@
 #include <linux/namei.h>
 #include <linux/workqueue.h>
 #include <linux/uio.h>
+#include <linux/mutex.h>
 
 #include "manager.h"
 #include "allowlist.h"
@@ -61,6 +62,12 @@ static void stop_input_hook();
 static struct work_struct stop_init_rc_hook_work;
 static struct work_struct stop_execve_hook_work;
 static struct work_struct stop_input_hook_work;
+
+static DEFINE_MUTEX(kp_lock);
+static bool execve_kp_registered;
+static bool sys_read_kp_registered;
+static bool sys_fstat_kp_registered;
+static bool input_event_kp_registered;
 
 void on_post_fs_data(void)
 {
@@ -596,18 +603,36 @@ static struct kprobe input_event_kp = {
 
 static void do_stop_init_rc_hook(struct work_struct *work)
 {
-	unregister_kprobe(&sys_read_kp);
-	unregister_kretprobe(&sys_fstat_kp);
+	mutex_lock(&kp_lock);
+	if (sys_read_kp_registered) {
+		unregister_kprobe(&sys_read_kp);
+		sys_read_kp_registered = false;
+	}
+	if (sys_fstat_kp_registered) {
+		unregister_kretprobe(&sys_fstat_kp);
+		sys_fstat_kp_registered = false;
+	}
+	mutex_unlock(&kp_lock);
 }
 
 static void do_stop_execve_hook(struct work_struct *work)
 {
-	unregister_kprobe(&execve_kp);
+	mutex_lock(&kp_lock);
+	if (execve_kp_registered) {
+		unregister_kprobe(&execve_kp);
+		execve_kp_registered = false;
+	}
+	mutex_unlock(&kp_lock);
 }
 
 static void do_stop_input_hook(struct work_struct *work)
 {
-	unregister_kprobe(&input_event_kp);
+	mutex_lock(&kp_lock);
+	if (input_event_kp_registered) {
+		unregister_kprobe(&input_event_kp);
+		input_event_kp_registered = false;
+	}
+	mutex_unlock(&kp_lock);
 }
 
 static void stop_init_rc_hook()
@@ -640,15 +665,23 @@ void ksu_ksud_init()
 
 	ret = register_kprobe(&execve_kp);
 	pr_info("ksud: execve_kp: %d\n", ret);
+	if (!ret)
+		execve_kp_registered = true;
 
 	ret = register_kprobe(&sys_read_kp);
 	pr_info("ksud: sys_read_kp: %d\n", ret);
+	if (!ret)
+		sys_read_kp_registered = true;
 
 	ret = register_kretprobe(&sys_fstat_kp);
 	pr_info("ksud: sys_fstat_kp: %d\n", ret);
+	if (!ret)
+		sys_fstat_kp_registered = true;
 
 	ret = register_kprobe(&input_event_kp);
 	pr_info("ksud: input_event_kp: %d\n", ret);
+	if (!ret)
+		input_event_kp_registered = true;
 
 	INIT_WORK(&stop_init_rc_hook_work, do_stop_init_rc_hook);
 	INIT_WORK(&stop_execve_hook_work, do_stop_execve_hook);
@@ -657,8 +690,28 @@ void ksu_ksud_init()
 
 void ksu_ksud_exit()
 {
-	unregister_kprobe(&execve_kp);
-	// this should be done before unregister sys_read_kp
-	// unregister_kprobe(&sys_read_kp);
-	unregister_kprobe(&input_event_kp);
+	/* Flush pending work items first so they don't race with us */
+	flush_work(&stop_init_rc_hook_work);
+	flush_work(&stop_execve_hook_work);
+	flush_work(&stop_input_hook_work);
+
+	/* Now unregister anything that the work items didn't get to */
+	mutex_lock(&kp_lock);
+	if (execve_kp_registered) {
+		unregister_kprobe(&execve_kp);
+		execve_kp_registered = false;
+	}
+	if (sys_read_kp_registered) {
+		unregister_kprobe(&sys_read_kp);
+		sys_read_kp_registered = false;
+	}
+	if (sys_fstat_kp_registered) {
+		unregister_kretprobe(&sys_fstat_kp);
+		sys_fstat_kp_registered = false;
+	}
+	if (input_event_kp_registered) {
+		unregister_kprobe(&input_event_kp);
+		input_event_kp_registered = false;
+	}
+	mutex_unlock(&kp_lock);
 }

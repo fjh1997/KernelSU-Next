@@ -115,6 +115,12 @@ object Natives {
     external fun isAvcSpoofEnabled(): Boolean
     external fun setAvcSpoofEnabled(enabled: Boolean): Boolean
 
+    /**
+     * Notify the kernel module that we are about to unload it.
+     * After this call, the caller should close all KSU fds and execute rmmod.
+     */
+    external fun prepareUnload(): Boolean
+
     external fun getSuperuserCount(): Int
 
     private const val NON_ROOT_DEFAULT_PROFILE_KEY = "$"

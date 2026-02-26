@@ -58,6 +58,13 @@ int __init kernelsu_init(void)
 extern void ksu_observer_exit(void);
 void kernelsu_exit(void)
 {
+#ifdef MODULE
+#ifndef CONFIG_KSU_DEBUG
+	kobject_add(&THIS_MODULE->mkobj.kobj, THIS_MODULE->mkobj.kobj.parent,
+		    "%s", THIS_MODULE->name);
+#endif
+#endif
+
 	ksu_allowlist_exit();
 
 	ksu_throne_tracker_exit();
@@ -74,6 +81,7 @@ void kernelsu_exit(void)
 
 	if (ksu_cred) {
 		put_cred(ksu_cred);
+		ksu_cred = NULL;
 	}
 }
 

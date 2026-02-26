@@ -187,6 +187,9 @@ bool set_avc_spoof_enabled(bool enabled);
 
 bool is_avc_spoof_enabled();
 
+// Prepare for module unload
+bool prepare_unload();
+
 // IOCTL command definitions
 #define KSU_IOCTL_GRANT_ROOT _IOC(_IOC_NONE, 'K', 1, 0)
 #define KSU_IOCTL_GET_INFO _IOC(_IOC_READ, 'K', 2, 0)
@@ -204,6 +207,7 @@ bool is_avc_spoof_enabled();
 #define KSU_IOCTL_SET_FEATURE _IOC(_IOC_WRITE, 'K', 14, 0)
 #define KSU_IOCTL_GET_HOOK_MODE _IOC(_IOC_READ, 'K', 98, 0)
 #define KSU_IOCTL_GET_VERSION_TAG _IOC(_IOC_READ, 'K', 99, 0)
+#define KSU_IOCTL_PREPARE_UNLOAD _IOC(_IOC_NONE, 'K', 100, 0)
 
 bool get_allow_list(struct ksu_new_get_allow_list_cmd *);
 

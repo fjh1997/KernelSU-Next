@@ -513,6 +513,12 @@ static int do_get_version_tag(void __user *arg)
 	return 0;
 }
 
+static int do_prepare_unload(void __user *arg)
+{
+	pr_info("prepare_unload: module unload requested by manager\n");
+	return 0;
+}
+
 static int do_nuke_ext4_sysfs(void __user *arg)
 {
     struct ksu_nuke_ext4_sysfs_cmd cmd;
@@ -794,6 +800,10 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
 	  .name = "GET_VERSION_TAG",
 	  .handler = do_get_version_tag,
 	  .perm_check = manager_or_root },
+    { .cmd = KSU_IOCTL_PREPARE_UNLOAD,
+      .name = "PREPARE_UNLOAD",
+      .handler = do_prepare_unload,
+      .perm_check = only_manager },
     { .cmd = 0, .name = NULL, .handler = NULL, .perm_check = NULL } // Sentinel
 };
 
@@ -990,7 +1000,22 @@ void ksu_supercalls_init(void)
 
 void ksu_supercalls_exit(void)
 {
+    struct mount_entry *entry, *tmp;
+
     unregister_kprobe(&reboot_kp);
+
+    /* Free mount_list entries */
+    down_write(&mount_list_lock);
+    list_for_each_entry_safe(entry, tmp, &mount_list, list) {
+        list_del(&entry->list);
+        kfree(entry->umountable);
+        kfree(entry);
+    }
+    up_write(&mount_list_lock);
+
+    /* Free sulog heap buffer */
+    kfree(sulog_buf_ptr);
+    sulog_buf_ptr = NULL;
 }
 
 // IOCTL dispatcher
