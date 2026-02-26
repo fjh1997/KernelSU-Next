@@ -590,23 +590,29 @@ fun UninstallItem(
                     when (uninstallType) {
                         UninstallType.TEMPORARY -> {
                             withContext(Dispatchers.IO) {
-                                // 1. Get root shell BEFORE closing driver fd
                                 withNewRootShell(globalMnt = true) {
-                                    // 2. Notify kernel we're about to unload
                                     Natives.prepareUnload()
-                                    // 3. Close our driver fd so module refcount drops
                                     Natives.closeDriverFd()
-                                    // 4. Kill other processes holding ksu_driver fds
-                                    //    (e.g. zn-daemon), then daemonize rmmod.
-                                    //    The root shell's stdin/stdout/stderr are
-                                    //    file wrappers with .owner=THIS_MODULE, so
-                                    //    we must exit the shell to release them.
-                                    //    The background process closes its inherited
-                                    //    wrapper fds, sleeps to let the shell exit,
-                                    //    then runs rmmod.
                                     newJob().add(
                                         """
-                                        # Kill processes holding ksu_driver fds (except ourselves)
+                                        # 1. Stop Zygisk daemon gracefully first
+                                        #    Find rezygisk/zygisksu module and stop its daemon
+                                        for module_id in rezygisk zygisksu; do
+                                          module_dir="/data/adb/modules/${'$'}module_id"
+                                          [ -d "${'$'}module_dir" ] || continue
+                                          # Create disable flag to prevent restart
+                                          touch "${'$'}module_dir/disable"
+                                          # Find and kill the daemon
+                                          for pid_dir in /proc/[0-9]*; do
+                                            pid=${'$'}(basename "${'$'}pid_dir")
+                                            cmdline=${'$'}(cat "${'$'}pid_dir/cmdline" 2>/dev/null | tr '\0' ' ')
+                                            case "${'$'}cmdline" in *zn-daemon*|*zygiskd*|*rezygisk*)
+                                              kill "${'$'}pid" 2>/dev/null
+                                            ;; esac
+                                          done
+                                        done
+                                        sleep 1
+                                        # 2. Force kill any remaining processes holding ksu_driver fds
                                         for pid_dir in /proc/[0-9]*; do
                                           pid=${'$'}(basename "${'$'}pid_dir")
                                           [ "${'$'}pid" = "$$" ] && continue
@@ -618,8 +624,8 @@ fun UninstallItem(
                                             ;; esac
                                           done
                                         done
-                                        # Daemonize: close inherited wrapper fds, wait for
-                                        # parent shell to exit (releasing its wrappers), rmmod
+                                        # 3. Daemonize rmmod: detach from shell so file wrapper
+                                        #    fds on stdin/stdout/stderr are released when shell exits
                                         setsid sh -c 'exec 0</dev/null 1>/dev/null 2>/dev/null; sleep 2; rmmod kernelsu' &
                                         """.trimIndent()
                                     ).exec()
