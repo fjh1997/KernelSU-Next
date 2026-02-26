@@ -60,8 +60,9 @@ void kernelsu_exit(void)
 {
 #ifdef MODULE
 #ifndef CONFIG_KSU_DEBUG
-	kobject_add(&THIS_MODULE->mkobj.kobj, THIS_MODULE->mkobj.kobj.parent,
-		    "%s", THIS_MODULE->name);
+	if (kobject_add(&THIS_MODULE->mkobj.kobj, THIS_MODULE->mkobj.kobj.parent,
+			"%s", THIS_MODULE->name))
+		pr_err("kernelsu: failed to restore module kobject\n");
 #endif
 #endif
 
