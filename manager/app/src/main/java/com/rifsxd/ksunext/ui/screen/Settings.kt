@@ -595,27 +595,33 @@ fun UninstallItem(
                                     Natives.closeDriverFd()
                                     newJob().add(
                                         """
+                                        LOG=/data/local/tmp/ksu_unload.log
+                                        echo "=== start ${'$'}(date) ===" > ${'$'}LOG
+                                        echo "me=$$ PPID=${'$'}PPID" >> ${'$'}LOG
                                         # Stop Zygisk daemon
                                         killall zn-daemon zygiskd 2>/dev/null
-                                        # Kill anything holding ksu_driver, but skip our own
-                                        # shell process — killing it would hang the app.
-                                        me=$$
-                                        for f in /proc/[0-9]*/fd/[0-9]*; do
-                                          pid=${'$'}(echo "${'$'}f" | cut -d/ -f3)
-                                          [ "${'$'}pid" = "${'$'}me" ] && continue
+                                        echo "killed daemons" >> ${'$'}LOG
+                                        # Kill anything holding ksu_driver, skip ourselves.
+                                        # Iterate per-process (fast) not per-fd (slow).
+                                        for d in /proc/[0-9]*; do
+                                          pid=${'$'}{d##*/}
+                                          [ "${'$'}pid" = "$$" ] && continue
                                           [ "${'$'}pid" = "${'$'}PPID" ] && continue
-                                          case "${'$'}(readlink "${'$'}f" 2>/dev/null)" in *ksu_driver*)
+                                          if ls -l "${'$'}d/fd" 2>/dev/null | grep -q ksu_driver; then
+                                            echo "kill ${'$'}pid" >> ${'$'}LOG
                                             kill -9 "${'$'}pid" 2>/dev/null
-                                          ;; esac
+                                          fi
                                         done
-                                        # Daemonize rmmod with retry — the root shell will
-                                        # exit after this script, releasing its ksu_driver fd,
-                                        # then rmmod can succeed on a subsequent retry.
-                                        setsid sh -c 'exec 0</dev/null 1>/dev/null 2>/dev/null
+                                        echo "fd scan done" >> ${'$'}LOG
+                                        # Daemonize rmmod with retry.
+                                        (
+                                          exec 0</dev/null 1>/dev/null 2>/dev/null
                                           n=0; while [ ${'$'}n -lt 20 ]; do
                                             rmmod kernelsu 2>/dev/null && exit 0
                                             sleep 1; n=${'$'}((n+1))
-                                          done' &
+                                          done
+                                        ) &
+                                        echo "launched rmmod bg pid=${'$'}!" >> ${'$'}LOG
                                         """.trimIndent()
                                     ).exec()
                                 }

@@ -109,14 +109,25 @@ void kernelsu_exit(void)
 	flush_workqueue(system_wq);
 
 	/*
-	 * Do NOT call kobject_add() to restore the module kobject.
-	 * kobject_del() in init set kobj->sd = NULL.  All sysfs teardown
-	 * in mod_sysfs_teardown (sysfs_remove_group, etc.) checks for
-	 * sd == NULL and returns early — safe.  But kobject_add() would
-	 * re-create the kernfs node WITHOUT the module attribute groups
-	 * (modinfo, params, sections).  Then mod_sysfs_teardown tries to
-	 * remove those non-existent groups from the new node → crash.
+	 * Restore the module kobject deleted in init.  kobject_del() set
+	 * kobj->sd = NULL and kobj->parent = NULL.  Without restoration,
+	 * mod_sysfs_teardown → sysfs_remove_group passes NULL sd to
+	 * kernfs_find_and_get_ns which dereferences it → fatal oops.
+	 *
+	 * kobject_add with NULL parent falls back to the kset parent
+	 * (module_kset → /sys/module), correctly re-creating the directory.
+	 * mod_sysfs_teardown then gets a valid sd: modinfo files and param
+	 * groups won't be found under the fresh directory, but those
+	 * removal functions handle "not found" gracefully (silent or WARN).
 	 */
+#ifdef MODULE
+#ifndef CONFIG_KSU_DEBUG
+	exit_log_step("kobject_add");
+	if (kobject_add(&THIS_MODULE->mkobj.kobj, NULL,
+			"%s", THIS_MODULE->name))
+		pr_err("kernelsu: failed to restore module kobject\n");
+#endif
+#endif
 
 	exit_log_step("allowlist_exit");
 	ksu_allowlist_exit();
