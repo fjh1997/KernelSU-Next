@@ -4,6 +4,7 @@
 #include <linux/namei.h>
 #include <linux/fsnotify_backend.h>
 #include <linux/slab.h>
+#include <linux/workqueue.h>
 #include <linux/rculist.h>
 #include <linux/version.h>
 #include "klog.h" // IWYU pragma: keep
@@ -125,6 +126,16 @@ void ksu_observer_exit(void)
 		return;
 
 	unwatch_one_dir(&g_watch);
-	fsnotify_put_group(g);
+	/*
+	 * fsnotify_destroy_group clears all remaining marks, stops event
+	 * queueing, then puts the group reference.  Marks are freed
+	 * asynchronously via fsnotify_mark_destroy_workfn on the
+	 * system_unbound_wq, so we must flush that queue before returning
+	 * to prevent the kworker from accessing group->ops (ksu_ops) after
+	 * the module is unloaded.
+	 */
+	fsnotify_destroy_group(g);
+	flush_workqueue(system_unbound_wq);
+	g = NULL;
 	pr_info("observer exit done\n");
 }
