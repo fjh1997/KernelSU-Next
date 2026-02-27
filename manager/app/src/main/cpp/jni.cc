@@ -375,6 +375,12 @@ Java_com_rifsxd_ksunext_Natives_setAvcSpoofEnabled(JNIEnv *env, jobject thiz, jb
 }
 
 extern "C"
+JNIEXPORT void JNICALL
+Java_com_rifsxd_ksunext_Natives_closeDriverFd(JNIEnv *env, jobject thiz) {
+    close_driver_fd();
+}
+
+extern "C"
 JNIEXPORT jstring JNICALL
 Java_com_rifsxd_ksunext_Natives_getUserName(JNIEnv *env, jobject thiz, jint uid) {
     struct passwd *pw = getpwuid((uid_t) uid);

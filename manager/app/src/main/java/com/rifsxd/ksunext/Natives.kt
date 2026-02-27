@@ -115,6 +115,11 @@ object Natives {
     external fun isAvcSpoofEnabled(): Boolean
     external fun setAvcSpoofEnabled(enabled: Boolean): Boolean
 
+    /**
+     * Close the cached KSU driver fd so the module refcount drops to allow rmmod.
+     */
+    external fun closeDriverFd()
+
     external fun getSuperuserCount(): Int
 
     private const val NON_ROOT_DEFAULT_PROFILE_KEY = "$"

@@ -2,9 +2,12 @@
 #include <linux/fs.h>
 #include <linux/kobject.h>
 #include <linux/module.h>
+#include <linux/rcupdate.h>
+#include <linux/version.h>
 #include <linux/workqueue.h>
 
 #include "allowlist.h"
+#include "app_profile.h"
 #include "feature.h"
 #include "klog.h" // IWYU pragma: keep
 #include "throne_tracker.h"
@@ -33,6 +36,8 @@ int __init kernelsu_init(void)
         pr_err("prepare cred failed!\n");
     }
 
+	ksu_app_profile_init();
+
 	ksu_feature_init();
 
 	ksu_supercalls_init();
@@ -56,25 +61,34 @@ int __init kernelsu_init(void)
 }
 
 extern void ksu_observer_exit(void);
+
 void kernelsu_exit(void)
 {
+	/* Flush delayed fput work so __fput callbacks run while our code lives */
+	flush_workqueue(system_wq);
+
+	/* Restore kobject deleted in init to avoid NULL sd in sysfs teardown */
+#ifdef MODULE
+#ifndef CONFIG_KSU_DEBUG
+	if (kobject_add(&THIS_MODULE->mkobj.kobj, NULL,
+			"%s", THIS_MODULE->name))
+		pr_err("kernelsu: failed to restore module kobject\n");
+#endif
+#endif
+
 	ksu_allowlist_exit();
-
 	ksu_throne_tracker_exit();
-
 	ksu_observer_exit();
-
 	ksu_ksud_exit();
-
 	ksu_syscall_hook_manager_exit();
-
 	ksu_supercalls_exit();
-
 	ksu_feature_exit();
 
-	if (ksu_cred) {
-		put_cred(ksu_cred);
-	}
+	/* Leak ksu_cred: revert_creds may put it after our rcu_barrier */
+	ksu_cred = NULL;
+
+	rcu_barrier();
+	flush_workqueue(system_wq);
 }
 
 module_init(kernelsu_init);

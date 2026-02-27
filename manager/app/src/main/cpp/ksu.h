@@ -187,6 +187,9 @@ bool set_avc_spoof_enabled(bool enabled);
 
 bool is_avc_spoof_enabled();
 
+// Close the cached KSU driver fd
+void close_driver_fd();
+
 // IOCTL command definitions
 #define KSU_IOCTL_GRANT_ROOT _IOC(_IOC_NONE, 'K', 1, 0)
 #define KSU_IOCTL_GET_INFO _IOC(_IOC_READ, 'K', 2, 0)
