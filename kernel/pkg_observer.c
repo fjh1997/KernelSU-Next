@@ -4,7 +4,6 @@
 #include <linux/namei.h>
 #include <linux/fsnotify_backend.h>
 #include <linux/slab.h>
-#include <linux/workqueue.h>
 #include <linux/rculist.h>
 #include <linux/version.h>
 #include "klog.h" // IWYU pragma: keep
@@ -125,23 +124,34 @@ void ksu_observer_exit(void)
 	if (!g || IS_ERR(g))
 		return;
 
-	unwatch_one_dir(&g_watch);
 	/*
-	 * fsnotify_destroy_mark (called by unwatch_one_dir) detaches the
-	 * mark and queues fsnotify_mark_destroy_workfn on system_unbound_wq.
-	 * That workfn accesses mark->group->ops (ksu_ops in module memory).
+	 * DO NOT manually destroy marks via fsnotify_destroy_mark() +
+	 * fsnotify_put_mark().  That queues fsnotify_mark_destroy_workfn
+	 * as a DELAYED work on system_unbound_wq.  flush_workqueue() does
+	 * NOT flush delayed works, so the workfn races with group freeing
+	 * and dereferences mark->group->ops on freed (SLUB-poisoned) memory.
 	 *
-	 * We MUST flush the workqueue BEFORE calling fsnotify_destroy_group,
-	 * because fsnotify_destroy_group calls fsnotify_put_group which may
-	 * free the group struct.  If the kworker runs after the group is
-	 * freed, it dereferences mark->group->ops on freed (SLUB-poisoned)
-	 * memory and crashes.
-	 *
-	 * After flushing, all pending mark destruction is complete, so
-	 * fsnotify_destroy_group can safely free the group.
+	 * Instead, drop our extra mark reference and let fsnotify_destroy_group
+	 * handle everything.  Internally it calls:
+	 *   1. fsnotify_clear_marks_by_group — detaches and frees all marks
+	 *   2. fsnotify_wait_marks_destroyed — flush_delayed_work(&reaper_work)
+	 *   3. fsnotify_put_group — safe to free group, no pending work
 	 */
-	flush_workqueue(system_unbound_wq);
+	if (g_watch.mark) {
+		fsnotify_put_mark(g_watch.mark);
+		g_watch.mark = NULL;
+	}
+
 	fsnotify_destroy_group(g);
 	g = NULL;
+
+	if (g_watch.inode) {
+		iput(g_watch.inode);
+		g_watch.inode = NULL;
+	}
+	if (g_watch.kpath.dentry) {
+		path_put(&g_watch.kpath);
+		memset(&g_watch.kpath, 0, sizeof(g_watch.kpath));
+	}
 	pr_info("observer exit done\n");
 }
