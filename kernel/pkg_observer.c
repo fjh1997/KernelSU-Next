@@ -127,15 +127,21 @@ void ksu_observer_exit(void)
 
 	unwatch_one_dir(&g_watch);
 	/*
-	 * fsnotify_destroy_group clears all remaining marks, stops event
-	 * queueing, then puts the group reference.  Marks are freed
-	 * asynchronously via fsnotify_mark_destroy_workfn on the
-	 * system_unbound_wq, so we must flush that queue before returning
-	 * to prevent the kworker from accessing group->ops (ksu_ops) after
-	 * the module is unloaded.
+	 * fsnotify_destroy_mark (called by unwatch_one_dir) detaches the
+	 * mark and queues fsnotify_mark_destroy_workfn on system_unbound_wq.
+	 * That workfn accesses mark->group->ops (ksu_ops in module memory).
+	 *
+	 * We MUST flush the workqueue BEFORE calling fsnotify_destroy_group,
+	 * because fsnotify_destroy_group calls fsnotify_put_group which may
+	 * free the group struct.  If the kworker runs after the group is
+	 * freed, it dereferences mark->group->ops on freed (SLUB-poisoned)
+	 * memory and crashes.
+	 *
+	 * After flushing, all pending mark destruction is complete, so
+	 * fsnotify_destroy_group can safely free the group.
 	 */
-	fsnotify_destroy_group(g);
 	flush_workqueue(system_unbound_wq);
+	fsnotify_destroy_group(g);
 	g = NULL;
 	pr_info("observer exit done\n");
 }
