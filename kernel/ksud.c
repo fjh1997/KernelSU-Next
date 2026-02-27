@@ -17,6 +17,7 @@
 #include <linux/namei.h>
 #include <linux/workqueue.h>
 #include <linux/uio.h>
+#include <linux/module.h>
 #include <linux/mutex.h>
 
 #include "manager.h"
@@ -194,10 +195,9 @@ static int __maybe_unused count(struct user_arg_ptr argv, int max)
 static void on_post_fs_data_cbfun(struct callback_head *cb)
 {
 	on_post_fs_data();
+	kfree(cb);
+	module_put(THIS_MODULE);
 }
-
-static struct callback_head on_post_fs_data_cb = { .func =
-							on_post_fs_data_cbfun };
 
 static bool check_argv(struct user_arg_ptr argv, int index,
 			const char *expected, char *buf, size_t buf_len)
@@ -272,8 +272,20 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 			rcu_read_lock();
 			struct task_struct *init_task =
 				rcu_dereference(current->real_parent);
-			if (init_task)
-				task_work_add(init_task, &on_post_fs_data_cb, TWA_RESUME);
+			if (init_task) {
+				struct callback_head *cb =
+					kzalloc(sizeof(*cb), GFP_ATOMIC);
+				if (cb && try_module_get(THIS_MODULE)) {
+					cb->func = on_post_fs_data_cbfun;
+					if (task_work_add(init_task, cb,
+							  TWA_RESUME)) {
+						module_put(THIS_MODULE);
+						kfree(cb);
+					}
+				} else {
+					kfree(cb);
+				}
+			}
 			rcu_read_unlock();
 			first_zygote = false;
 			stop_execve_hook();

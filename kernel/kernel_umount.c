@@ -1,4 +1,5 @@
 #include <linux/sched.h>
+#include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/task_work.h>
 #include <linux/cred.h>
@@ -89,6 +90,7 @@ static void umount_tw_func(struct callback_head *cb)
 	revert_creds(saved);
 
 	kfree(tw);
+	module_put(THIS_MODULE);
 }
 
 int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
@@ -138,10 +140,16 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 	if (!tw)
 		return 0;
 
+	if (!try_module_get(THIS_MODULE)) {
+		kfree(tw);
+		return 0;
+	}
+
 	tw->cb.func = umount_tw_func;
 
 	int err = task_work_add(current, &tw->cb, TWA_RESUME);
 	if (err) {
+		module_put(THIS_MODULE);
 		kfree(tw);
 		pr_warn("unmount add task_work failed\n");
 	}

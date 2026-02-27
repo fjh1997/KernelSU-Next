@@ -8,6 +8,7 @@
 #include <linux/slab.h>
 #include <linux/kprobes.h>
 #include <linux/syscalls.h>
+#include <linux/module.h>
 #include <linux/task_work.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
@@ -829,6 +830,7 @@ static void ksu_install_fd_tw_func(struct callback_head *cb)
 	}
 
 	kfree(tw);
+	module_put(THIS_MODULE);
 }
 
 static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
@@ -848,10 +850,16 @@ static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
 		if (!tw)
 			return 0;
 
+		if (!try_module_get(THIS_MODULE)) {
+			kfree(tw);
+			return 0;
+		}
+
 		tw->outp = (int __user *)arg4;
 		tw->cb.func = ksu_install_fd_tw_func;
 
 		if (task_work_add(current, &tw->cb, TWA_RESUME)) {
+			module_put(THIS_MODULE);
 			kfree(tw);
 			pr_warn("install fd add task_work failed\n");
 		}
