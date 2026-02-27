@@ -125,33 +125,37 @@ void ksu_observer_exit(void)
 		return;
 
 	/*
-	 * DO NOT manually destroy marks via fsnotify_destroy_mark() +
-	 * fsnotify_put_mark().  That queues fsnotify_mark_destroy_workfn
-	 * as a DELAYED work on system_unbound_wq.  flush_workqueue() does
-	 * NOT flush delayed works, so the workfn races with group freeing
-	 * and dereferences mark->group->ops on freed (SLUB-poisoned) memory.
+	 * Do NOT destroy the fsnotify group or marks.  On this platform,
+	 * fsnotify_destroy_group() lacks fsnotify_wait_marks_destroyed():
+	 * destroying marks queues fsnotify_mark_destroy_workfn as a delayed
+	 * work that accesses group fields (mark_mutex, ops, etc.) AFTER
+	 * fsnotify_put_group() has already freed the group struct.
 	 *
-	 * Instead, drop our extra mark reference and let fsnotify_destroy_group
-	 * handle everything.  Internally it calls:
-	 *   1. fsnotify_clear_marks_by_group — detaches and frees all marks
-	 *   2. fsnotify_wait_marks_destroyed — flush_delayed_work(&reaper_work)
-	 *   3. fsnotify_put_group — safe to free group, no pending work
+	 * Every combination of flush_workqueue / reorder / sleep failed
+	 * because flush_workqueue cannot flush delayed works whose timer
+	 * hasn't expired, and we have no access to the internal reaper_work
+	 * struct needed for flush_delayed_work.
+	 *
+	 * Instead, disable event delivery and intentionally leak:
+	 *  - Zero the mark mask so events skip our mark
+	 *  - Set group->shutdown so fsnotify_handle_event returns early
+	 *    (checked BEFORE group->ops is dereferenced)
+	 *  - Leak the group, mark, inode ref, and path ref (~1 KB total)
+	 *
+	 * Since no mark refcount reaches zero, the delayed reaper is never
+	 * triggered for our mark, eliminating the race entirely.
+	 * Leaked memory is reclaimed on reboot.
 	 */
-	if (g_watch.mark) {
-		fsnotify_put_mark(g_watch.mark);
-		g_watch.mark = NULL;
-	}
+	if (g_watch.mark)
+		WRITE_ONCE(g_watch.mark->mask, 0);
 
-	fsnotify_destroy_group(g);
+	spin_lock(&g->notification_lock);
+	g->shutdown = true;
+	spin_unlock(&g->notification_lock);
+
 	g = NULL;
-
-	if (g_watch.inode) {
-		iput(g_watch.inode);
-		g_watch.inode = NULL;
-	}
-	if (g_watch.kpath.dentry) {
-		path_put(&g_watch.kpath);
-		memset(&g_watch.kpath, 0, sizeof(g_watch.kpath));
-	}
+	g_watch.mark = NULL;
+	g_watch.inode = NULL;
+	memset(&g_watch.kpath, 0, sizeof(g_watch.kpath));
 	pr_info("observer exit done\n");
 }
