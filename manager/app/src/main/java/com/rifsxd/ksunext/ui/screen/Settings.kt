@@ -598,26 +598,17 @@ fun UninstallItem(
                                         LOG=/data/local/tmp/ksu_unload.log
                                         echo "=== start ${'$'}(date) ===" > ${'$'}LOG
                                         echo "me=$$ PPID=${'$'}PPID" >> ${'$'}LOG
-                                        # Stop Zygisk daemon
+                                        # Stop Zygisk daemons that hold ksu_driver fds
                                         killall zn-daemon zygiskd 2>/dev/null
                                         echo "killed daemons" >> ${'$'}LOG
-                                        # Kill anything holding ksu_driver, skip ourselves.
-                                        # Iterate per-process (fast) not per-fd (slow).
-                                        for d in /proc/[0-9]*; do
-                                          pid=${'$'}{d##*/}
-                                          [ "${'$'}pid" = "$$" ] && continue
-                                          [ "${'$'}pid" = "${'$'}PPID" ] && continue
-                                          if ls -l "${'$'}d/fd" 2>/dev/null | grep -q ksu_driver; then
-                                            echo "kill ${'$'}pid" >> ${'$'}LOG
-                                            kill -9 "${'$'}pid" 2>/dev/null
-                                          fi
-                                        done
-                                        echo "fd scan done" >> ${'$'}LOG
+                                        sleep 1
                                         # Daemonize rmmod with retry.
+                                        # rmmod will fail while fds are still held; the
+                                        # retry loop handles stragglers automatically.
                                         (
                                           exec 0</dev/null 1>/dev/null 2>/dev/null
-                                          n=0; while [ ${'$'}n -lt 20 ]; do
-                                            rmmod kernelsu 2>/dev/null && exit 0
+                                          n=0; while [ ${'$'}n -lt 30 ]; do
+                                            rmmod kernelsu 2>/dev/null && break
                                             sleep 1; n=${'$'}((n+1))
                                           done
                                         ) &

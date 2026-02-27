@@ -164,16 +164,26 @@ void kernelsu_exit(void)
 	 * complete before we return, preventing a use-after-free when
 	 * free_module() reclaims our code/data pages.
 	 */
-	exit_log_step("rcu_barrier");
+	exit_log_step("rcu_barrier_1");
 	rcu_barrier();
 
-	/* Final flush: sub-exit functions (e.g. fops_proxy restore, fput of
-	 * hooked_rc_file) may have scheduled new delayed fput work.       */
+	/* Sub-exit functions (fops_proxy restore, fput of hooked files) may
+	 * have scheduled new delayed fput work.  Flush it, then drain any
+	 * new RCU callbacks that the fput work may have queued (e.g. a
+	 * put_cred from __fput → security_file_free path).              */
 	exit_log_step("final_flush");
 	flush_workqueue(system_wq);
 
 	exit_log_step("done");
 	exit_log_close();
+
+	/*
+	 * Final synchronisation: the flush_workqueue and filp_close above
+	 * may have triggered additional put_cred / call_rcu callbacks.
+	 * A second rcu_barrier ensures every RCU callback that could
+	 * reference our code/data has finished before free_module() runs.
+	 */
+	rcu_barrier();
 }
 
 module_init(kernelsu_init);
