@@ -597,26 +597,37 @@ fun UninstallItem(
                                         """
                                         LOG=/data/local/tmp/ksu_unload.log
                                         echo "=== start ${'$'}(date) ===" > ${'$'}LOG
-                                        echo "me=$$ PPID=${'$'}PPID" >> ${'$'}LOG
+
+                                        # Unmount KSU module overlays from global mount namespace
+                                        grep "/data/adb" /proc/1/mounts | awk '{print ${'$'}2}' | sort -r | while IFS= read -r mnt; do
+                                            umount -l "${'$'}mnt" 2>/dev/null
+                                        done
+                                        echo "unmounted overlays" >> ${'$'}LOG
+
                                         # Stop Zygisk daemons that hold ksu_driver fds
                                         killall zn-daemon zygiskd 2>/dev/null
                                         echo "killed daemons" >> ${'$'}LOG
                                         sleep 1
-                                        # Daemonize rmmod with retry.
-                                        # rmmod will fail while fds are still held; the
-                                        # retry loop handles stragglers automatically.
+
+                                        # Daemonize: rmmod then restart zygote to clear
+                                        # Zygisk injections from all app processes.
                                         (
                                           exec 0</dev/null 1>/dev/null 2>/dev/null
                                           n=0; while [ ${'$'}n -lt 30 ]; do
                                             rmmod kernelsu 2>/dev/null && break
                                             sleep 1; n=${'$'}((n+1))
                                           done
+                                          # Restart zygote so new app processes are clean
+                                          stop zygote
+                                          start zygote
                                         ) &
                                         echo "launched rmmod bg pid=${'$'}!" >> ${'$'}LOG
                                         """.trimIndent()
                                     ).exec()
                                 }
                             }
+                            // Kill app process so it restarts with correct status
+                            android.os.Process.killProcess(android.os.Process.myPid())
                         }
                         UninstallType.PERMANENT -> navigator.navigate(
                             FlashScreenDestination(FlashIt.FlashUninstall)
