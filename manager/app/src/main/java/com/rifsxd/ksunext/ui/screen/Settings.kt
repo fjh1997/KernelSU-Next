@@ -595,38 +595,20 @@ fun UninstallItem(
                                     Natives.closeDriverFd()
                                     newJob().add(
                                         """
-                                        # 1. Stop Zygisk daemon gracefully first
-                                        #    Find rezygisk/zygisksu module and stop its daemon
-                                        for module_id in rezygisk zygisksu; do
-                                          module_dir="/data/adb/modules/${'$'}module_id"
-                                          [ -d "${'$'}module_dir" ] || continue
-                                          # Create disable flag to prevent restart
-                                          touch "${'$'}module_dir/disable"
-                                          # Find and kill the daemon
-                                          for pid_dir in /proc/[0-9]*; do
-                                            pid=${'$'}(basename "${'$'}pid_dir")
-                                            cmdline=${'$'}(cat "${'$'}pid_dir/cmdline" 2>/dev/null | tr '\0' ' ')
-                                            case "${'$'}cmdline" in *zn-daemon*|*zygiskd*|*rezygisk*)
-                                              kill "${'$'}pid" 2>/dev/null
-                                            ;; esac
-                                          done
+                                        # Stop Zygisk daemon
+                                        killall zn-daemon zygiskd 2>/dev/null
+                                        # Kill anything holding ksu_driver
+                                        for f in /proc/[0-9]*/fd/[0-9]*; do
+                                          case "${'$'}(readlink "${'$'}f" 2>/dev/null)" in *ksu_driver*)
+                                            kill -9 "${'$'}(echo "${'$'}f" | cut -d/ -f3)" 2>/dev/null
+                                          ;; esac
                                         done
-                                        sleep 1
-                                        # 2. Force kill any remaining processes holding ksu_driver fds
-                                        for pid_dir in /proc/[0-9]*; do
-                                          pid=${'$'}(basename "${'$'}pid_dir")
-                                          [ "${'$'}pid" = "$$" ] && continue
-                                          for fd_path in "${'$'}pid_dir"/fd/*; do
-                                            target=${'$'}(readlink "${'$'}fd_path" 2>/dev/null)
-                                            case "${'$'}target" in *ksu_driver*)
-                                              kill -9 "${'$'}pid" 2>/dev/null
-                                              break
-                                            ;; esac
-                                          done
-                                        done
-                                        # 3. Daemonize rmmod: detach from shell so file wrapper
-                                        #    fds on stdin/stdout/stderr are released when shell exits
-                                        setsid sh -c 'exec 0</dev/null 1>/dev/null 2>/dev/null; sleep 2; rmmod kernelsu' &
+                                        # Daemonize rmmod with retry
+                                        setsid sh -c 'exec 0</dev/null 1>/dev/null 2>/dev/null
+                                          n=0; while [ ${'$'}n -lt 20 ]; do
+                                            rmmod kernelsu 2>/dev/null && exit 0
+                                            sleep 1; n=${'$'}((n+1))
+                                          done' &
                                         """.trimIndent()
                                     ).exec()
                                 }
