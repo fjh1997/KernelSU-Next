@@ -15,11 +15,20 @@
 #include "su_mount_ns.h"
 #include "syscall_hook_manager.h"
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
-static struct group_info root_groups = { .usage = REFCOUNT_INIT(2) };
-#else
-static struct group_info root_groups = { .usage = ATOMIC_INIT(2) };
-#endif
+/*
+ * Heap-allocated empty group_info used for root profiles.  Must NOT be a
+ * module-static variable because rooted processes keep a pointer to it in
+ * their cred->group_info; if the module is unloaded the pointer dangles and
+ * put_cred_rcu crashes when the process later exits.
+ */
+static struct group_info *root_groups;
+
+void ksu_app_profile_init(void)
+{
+	root_groups = groups_alloc(0);
+	if (!root_groups)
+		pr_err("KernelSU: failed to allocate root_groups\n");
+}
 
 void setup_groups(struct root_profile *profile, struct cred *cred)
 {
@@ -32,7 +41,7 @@ void setup_groups(struct root_profile *profile, struct cred *cred)
         // setgroup to root and return early.
         if (cred->group_info)
             put_group_info(cred->group_info);
-        cred->group_info = get_group_info(&root_groups);
+        cred->group_info = get_group_info(root_groups);
         return;
     }
 

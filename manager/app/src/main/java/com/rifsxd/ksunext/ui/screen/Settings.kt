@@ -579,9 +579,6 @@ fun UninstallItem(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val uninstallConfirmDialog = rememberConfirmDialog()
-    val showTodo = {
-        Toast.makeText(context, "TODO", Toast.LENGTH_SHORT).show()
-    }
     val uninstallDialog = rememberUninstallDialog { uninstallType ->
         scope.launch {
             val result = uninstallConfirmDialog.awaitConfirm(
@@ -591,7 +588,46 @@ fun UninstallItem(
             if (result == ConfirmResult.Confirmed) {
                 withLoading {
                     when (uninstallType) {
-                        UninstallType.TEMPORARY -> showTodo()
+                        UninstallType.TEMPORARY -> {
+                            withContext(Dispatchers.IO) {
+                                withNewRootShell(globalMnt = true) {
+                                    Natives.prepareUnload()
+                                    Natives.closeDriverFd()
+                                    newJob().add(
+                                        """
+                                        # LOG=/data/local/tmp/ksu_unload.log
+                                        # echo "=== start ${'$'}(date) ===" > ${'$'}LOG
+
+                                        # Unmount KSU module overlays from global mount namespace
+                                        grep "/data/adb" /proc/1/mounts | awk '{print ${'$'}2}' | sort -r | while IFS= read -r mnt; do
+                                            umount -l "${'$'}mnt" 2>/dev/null
+                                        done
+                                        # echo "unmounted overlays" >> ${'$'}LOG
+
+                                        # Stop Zygisk daemons that hold ksu_driver fds
+                                        killall zn-daemon zygiskd 2>/dev/null
+                                        # echo "killed daemons" >> ${'$'}LOG
+                                        sleep 1
+
+                                        # Daemonize: rmmod then restart zygote to clear
+                                        # Zygisk injections from all app processes.
+                                        (
+                                          exec 0</dev/null 1>/dev/null 2>/dev/null
+                                          n=0; while [ ${'$'}n -lt 30 ]; do
+                                            rmmod kernelsu 2>/dev/null && break
+                                            sleep 1; n=${'$'}((n+1))
+                                          done
+                                          # Restart zygote so new app processes are clean
+                                          setprop ctl.restart zygote
+                                        ) &
+                                        # echo "launched rmmod bg pid=${'$'}!" >> ${'$'}LOG
+                                        """.trimIndent()
+                                    ).exec()
+                                }
+                            }
+                            // Kill app process so it restarts with correct status
+                            android.os.Process.killProcess(android.os.Process.myPid())
+                        }
                         UninstallType.PERMANENT -> navigator.navigate(
                             FlashScreenDestination(FlashIt.FlashUninstall)
                         )
@@ -647,11 +683,13 @@ enum class UninstallType(val title: Int, val message: Int, val icon: ImageVector
 @Composable
 fun rememberUninstallDialog(onSelected: (UninstallType) -> Unit): DialogHandle {
     return rememberCustomDialog { dismiss ->
-        val options = listOf(
-            // UninstallType.TEMPORARY,
-            UninstallType.PERMANENT,
-            UninstallType.RESTORE_STOCK_IMAGE
-        )
+        val options = buildList {
+            if (Natives.isLkmMode) {
+                add(UninstallType.TEMPORARY)
+            }
+            add(UninstallType.PERMANENT)
+            add(UninstallType.RESTORE_STOCK_IMAGE)
+        }
         val listOptions = options.map {
             ListOption(
                 titleText = stringResource(it.title),
