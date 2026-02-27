@@ -7,6 +7,7 @@
 #include <linux/workqueue.h>
 
 #include "allowlist.h"
+#include "app_profile.h"
 #include "feature.h"
 #include "klog.h" // IWYU pragma: keep
 #include "throne_tracker.h"
@@ -34,6 +35,8 @@ int __init kernelsu_init(void)
     if (!ksu_cred) {
         pr_err("prepare cred failed!\n");
     }
+
+	ksu_app_profile_init();
 
 	ksu_feature_init();
 
