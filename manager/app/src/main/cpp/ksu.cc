@@ -239,3 +239,14 @@ const char* get_version_tag(void)
 bool is_zygisk_enabled() {
     return !!getenv("ZYGISK_ENABLED");
 }
+
+bool prepare_unload() {
+    return ksuctl(KSU_IOCTL_PREPARE_UNLOAD) == 0;
+}
+
+void close_driver_fd() {
+    if (fd >= 0) {
+        close(fd);
+        fd = -1;
+    }
+}
