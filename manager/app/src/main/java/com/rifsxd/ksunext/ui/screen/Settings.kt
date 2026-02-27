@@ -597,13 +597,20 @@ fun UninstallItem(
                                         """
                                         # Stop Zygisk daemon
                                         killall zn-daemon zygiskd 2>/dev/null
-                                        # Kill anything holding ksu_driver
+                                        # Kill anything holding ksu_driver, but skip our own
+                                        # shell process — killing it would hang the app.
+                                        me=$$
                                         for f in /proc/[0-9]*/fd/[0-9]*; do
+                                          pid=${'$'}(echo "${'$'}f" | cut -d/ -f3)
+                                          [ "${'$'}pid" = "${'$'}me" ] && continue
+                                          [ "${'$'}pid" = "${'$'}PPID" ] && continue
                                           case "${'$'}(readlink "${'$'}f" 2>/dev/null)" in *ksu_driver*)
-                                            kill -9 "${'$'}(echo "${'$'}f" | cut -d/ -f3)" 2>/dev/null
+                                            kill -9 "${'$'}pid" 2>/dev/null
                                           ;; esac
                                         done
-                                        # Daemonize rmmod with retry
+                                        # Daemonize rmmod with retry — the root shell will
+                                        # exit after this script, releasing its ksu_driver fd,
+                                        # then rmmod can succeed on a subsequent retry.
                                         setsid sh -c 'exec 0</dev/null 1>/dev/null 2>/dev/null
                                           n=0; while [ ${'$'}n -lt 20 ]; do
                                             rmmod kernelsu 2>/dev/null && exit 0

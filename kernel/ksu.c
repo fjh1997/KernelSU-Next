@@ -2,6 +2,7 @@
 #include <linux/fs.h>
 #include <linux/kobject.h>
 #include <linux/module.h>
+#include <linux/rcupdate.h>
 #include <linux/version.h>
 #include <linux/workqueue.h>
 
@@ -107,14 +108,15 @@ void kernelsu_exit(void)
 	exit_log_step("flush_delayed_fput");
 	flush_workqueue(system_wq);
 
-#ifdef MODULE
-#ifndef CONFIG_KSU_DEBUG
-	exit_log_step("kobject_add");
-	if (kobject_add(&THIS_MODULE->mkobj.kobj, THIS_MODULE->mkobj.kobj.parent,
-			"%s", THIS_MODULE->name))
-		pr_err("kernelsu: failed to restore module kobject\n");
-#endif
-#endif
+	/*
+	 * Do NOT call kobject_add() to restore the module kobject.
+	 * kobject_del() in init set kobj->sd = NULL.  All sysfs teardown
+	 * in mod_sysfs_teardown (sysfs_remove_group, etc.) checks for
+	 * sd == NULL and returns early — safe.  But kobject_add() would
+	 * re-create the kernfs node WITHOUT the module attribute groups
+	 * (modinfo, params, sections).  Then mod_sysfs_teardown tries to
+	 * remove those non-existent groups from the new node → crash.
+	 */
 
 	exit_log_step("allowlist_exit");
 	ksu_allowlist_exit();
@@ -142,6 +144,17 @@ void kernelsu_exit(void)
 		put_cred(ksu_cred);
 		ksu_cred = NULL;
 	}
+
+	/*
+	 * put_cred() defers the actual freeing via call_rcu(&cred->rcu,
+	 * put_cred_rcu).  The RCU callback put_cred_rcu calls
+	 * security_cred_free() which may access data associated with our
+	 * module.  rcu_barrier() waits for all pending RCU callbacks to
+	 * complete before we return, preventing a use-after-free when
+	 * free_module() reclaims our code/data pages.
+	 */
+	exit_log_step("rcu_barrier");
+	rcu_barrier();
 
 	/* Final flush: sub-exit functions (e.g. fops_proxy restore, fput of
 	 * hooked_rc_file) may have scheduled new delayed fput work.       */
