@@ -17,6 +17,8 @@
 #include <linux/namei.h>
 #include <linux/workqueue.h>
 #include <linux/uio.h>
+#include <linux/module.h>
+#include <linux/mutex.h>
 
 #include "manager.h"
 #include "allowlist.h"
@@ -61,6 +63,12 @@ static void stop_input_hook();
 static struct work_struct stop_init_rc_hook_work;
 static struct work_struct stop_execve_hook_work;
 static struct work_struct stop_input_hook_work;
+
+static DEFINE_MUTEX(kp_lock);
+static bool execve_kp_registered;
+static bool sys_read_kp_registered;
+static bool sys_fstat_kp_registered;
+static bool input_event_kp_registered;
 
 void on_post_fs_data(void)
 {
@@ -187,10 +195,9 @@ static int __maybe_unused count(struct user_arg_ptr argv, int max)
 static void on_post_fs_data_cbfun(struct callback_head *cb)
 {
 	on_post_fs_data();
+	kfree(cb);
+	module_put(THIS_MODULE);
 }
-
-static struct callback_head on_post_fs_data_cb = { .func =
-							on_post_fs_data_cbfun };
 
 static bool check_argv(struct user_arg_ptr argv, int index,
 			const char *expected, char *buf, size_t buf_len)
@@ -265,8 +272,20 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 			rcu_read_lock();
 			struct task_struct *init_task =
 				rcu_dereference(current->real_parent);
-			if (init_task)
-				task_work_add(init_task, &on_post_fs_data_cb, TWA_RESUME);
+			if (init_task) {
+				struct callback_head *cb =
+					kzalloc(sizeof(*cb), GFP_ATOMIC);
+				if (cb && try_module_get(THIS_MODULE)) {
+					cb->func = on_post_fs_data_cbfun;
+					if (task_work_add(init_task, cb,
+							  TWA_RESUME)) {
+						module_put(THIS_MODULE);
+						kfree(cb);
+					}
+				} else {
+					kfree(cb);
+				}
+			}
 			rcu_read_unlock();
 			first_zygote = false;
 			stop_execve_hook();
@@ -279,6 +298,8 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
 static ssize_t (*orig_read)(struct file *, char __user *, size_t, loff_t *);
 static ssize_t (*orig_read_iter)(struct kiocb *, struct iov_iter *);
 static struct file_operations fops_proxy;
+static const struct file_operations *orig_rc_fops;
+static struct file *hooked_rc_file;
 static ssize_t ksu_rc_pos = 0;
 const size_t ksu_rc_len = sizeof(KERNEL_SU_RC) - 1;
 
@@ -422,6 +443,8 @@ static void ksu_handle_sys_read(unsigned int fd)
 		fops_proxy.read_iter = read_iter_proxy;
 	}
 	// replace the file_operations
+	orig_rc_fops = file->f_op;
+	hooked_rc_file = get_file(file);
 	file->f_op = &fops_proxy;
 
 skip:
@@ -596,18 +619,36 @@ static struct kprobe input_event_kp = {
 
 static void do_stop_init_rc_hook(struct work_struct *work)
 {
-	unregister_kprobe(&sys_read_kp);
-	unregister_kretprobe(&sys_fstat_kp);
+	mutex_lock(&kp_lock);
+	if (sys_read_kp_registered) {
+		unregister_kprobe(&sys_read_kp);
+		sys_read_kp_registered = false;
+	}
+	if (sys_fstat_kp_registered) {
+		unregister_kretprobe(&sys_fstat_kp);
+		sys_fstat_kp_registered = false;
+	}
+	mutex_unlock(&kp_lock);
 }
 
 static void do_stop_execve_hook(struct work_struct *work)
 {
-	unregister_kprobe(&execve_kp);
+	mutex_lock(&kp_lock);
+	if (execve_kp_registered) {
+		unregister_kprobe(&execve_kp);
+		execve_kp_registered = false;
+	}
+	mutex_unlock(&kp_lock);
 }
 
 static void do_stop_input_hook(struct work_struct *work)
 {
-	unregister_kprobe(&input_event_kp);
+	mutex_lock(&kp_lock);
+	if (input_event_kp_registered) {
+		unregister_kprobe(&input_event_kp);
+		input_event_kp_registered = false;
+	}
+	mutex_unlock(&kp_lock);
 }
 
 static void stop_init_rc_hook()
@@ -640,15 +681,23 @@ void ksu_ksud_init()
 
 	ret = register_kprobe(&execve_kp);
 	pr_info("ksud: execve_kp: %d\n", ret);
+	if (!ret)
+		execve_kp_registered = true;
 
 	ret = register_kprobe(&sys_read_kp);
 	pr_info("ksud: sys_read_kp: %d\n", ret);
+	if (!ret)
+		sys_read_kp_registered = true;
 
 	ret = register_kretprobe(&sys_fstat_kp);
 	pr_info("ksud: sys_fstat_kp: %d\n", ret);
+	if (!ret)
+		sys_fstat_kp_registered = true;
 
 	ret = register_kprobe(&input_event_kp);
 	pr_info("ksud: input_event_kp: %d\n", ret);
+	if (!ret)
+		input_event_kp_registered = true;
 
 	INIT_WORK(&stop_init_rc_hook_work, do_stop_init_rc_hook);
 	INIT_WORK(&stop_execve_hook_work, do_stop_execve_hook);
@@ -657,8 +706,35 @@ void ksu_ksud_init()
 
 void ksu_ksud_exit()
 {
-	unregister_kprobe(&execve_kp);
-	// this should be done before unregister sys_read_kp
-	// unregister_kprobe(&sys_read_kp);
-	unregister_kprobe(&input_event_kp);
+	/* Restore init.rc's original fops before module memory is freed */
+	if (hooked_rc_file) {
+		hooked_rc_file->f_op = orig_rc_fops;
+		fput(hooked_rc_file);
+		hooked_rc_file = NULL;
+	}
+
+	/* Flush pending work items first so they don't race with us */
+	flush_work(&stop_init_rc_hook_work);
+	flush_work(&stop_execve_hook_work);
+	flush_work(&stop_input_hook_work);
+
+	/* Now unregister anything that the work items didn't get to */
+	mutex_lock(&kp_lock);
+	if (execve_kp_registered) {
+		unregister_kprobe(&execve_kp);
+		execve_kp_registered = false;
+	}
+	if (sys_read_kp_registered) {
+		unregister_kprobe(&sys_read_kp);
+		sys_read_kp_registered = false;
+	}
+	if (sys_fstat_kp_registered) {
+		unregister_kretprobe(&sys_fstat_kp);
+		sys_fstat_kp_registered = false;
+	}
+	if (input_event_kp_registered) {
+		unregister_kprobe(&input_event_kp);
+		input_event_kp_registered = false;
+	}
+	mutex_unlock(&kp_lock);
 }
