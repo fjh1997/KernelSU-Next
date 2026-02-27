@@ -94,6 +94,19 @@ void kernelsu_exit(void)
 	exit_log_open();
 	exit_log_step("start");
 
+	/*
+	 * Flush pending delayed fput work.  When a process exits while holding
+	 * file-wrapper fds, fput() cannot use task_work (the task is exiting)
+	 * and falls back to the system workqueue (delayed_fput).  If we proceed
+	 * to free module memory before those deferred __fput callbacks run, the
+	 * kworker will call f_op->release on freed code and crash.
+	 *
+	 * Flushing the system workqueue here guarantees that all pending
+	 * __fput() calls execute while our code is still in memory.
+	 */
+	exit_log_step("flush_delayed_fput");
+	flush_workqueue(system_wq);
+
 #ifdef MODULE
 #ifndef CONFIG_KSU_DEBUG
 	exit_log_step("kobject_add");
@@ -129,6 +142,11 @@ void kernelsu_exit(void)
 		put_cred(ksu_cred);
 		ksu_cred = NULL;
 	}
+
+	/* Final flush: sub-exit functions (e.g. fops_proxy restore, fput of
+	 * hooked_rc_file) may have scheduled new delayed fput work.       */
+	exit_log_step("final_flush");
+	flush_workqueue(system_wq);
 
 	exit_log_step("done");
 	exit_log_close();
