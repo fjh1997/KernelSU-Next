@@ -2,9 +2,12 @@
 #include <linux/fs.h>
 #include <linux/kobject.h>
 #include <linux/module.h>
+#include <linux/rcupdate.h>
+#include <linux/version.h>
 #include <linux/workqueue.h>
 
 #include "allowlist.h"
+#include "app_profile.h"
 #include "feature.h"
 #include "klog.h" // IWYU pragma: keep
 #include "throne_tracker.h"
@@ -33,6 +36,8 @@ int __init kernelsu_init(void)
         pr_err("prepare cred failed!\n");
     }
 
+	ksu_app_profile_init();
+
 	ksu_feature_init();
 
 	ksu_supercalls_init();
@@ -56,25 +61,89 @@ int __init kernelsu_init(void)
 }
 
 extern void ksu_observer_exit(void);
+
+/* Debug helper: write exit progress to a persistent file so we can
+ * tell exactly which step crashed even if pstore is unavailable.    */
+// static struct file *exit_log;
+// static loff_t exit_log_pos;
+//
+// static void exit_log_open(void)
+// {
+// 	exit_log = filp_open("/data/local/tmp/ksu_exit.log",
+// 			     O_WRONLY | O_CREAT | O_TRUNC | O_SYNC, 0644);
+// 	if (IS_ERR(exit_log))
+// 		exit_log = NULL;
+// 	exit_log_pos = 0;
+// }
+//
+// static void exit_log_step(const char *msg)
+// {
+// 	pr_err("kernelsu_exit: %s\n", msg);
+// 	if (exit_log) {
+// 		kernel_write(exit_log, msg, strlen(msg), &exit_log_pos);
+// 		kernel_write(exit_log, "\n", 1, &exit_log_pos);
+// 	}
+// }
+//
+// static void exit_log_close(void)
+// {
+// 	if (exit_log) {
+// 		filp_close(exit_log, NULL);
+// 		exit_log = NULL;
+// 	}
+// }
+
 void kernelsu_exit(void)
 {
+	// exit_log_open();
+	// exit_log_step("start");
+
+	/* Flush delayed fput work so __fput callbacks run while our code lives */
+	// exit_log_step("flush_delayed_fput");
+	flush_workqueue(system_wq);
+
+	/* Restore kobject deleted in init to avoid NULL sd in sysfs teardown */
+#ifdef MODULE
+#ifndef CONFIG_KSU_DEBUG
+	// exit_log_step("kobject_add");
+	if (kobject_add(&THIS_MODULE->mkobj.kobj, NULL,
+			"%s", THIS_MODULE->name))
+		pr_err("kernelsu: failed to restore module kobject\n");
+#endif
+#endif
+
+	// exit_log_step("allowlist_exit");
 	ksu_allowlist_exit();
 
+	// exit_log_step("throne_tracker_exit");
 	ksu_throne_tracker_exit();
 
+	// exit_log_step("observer_exit");
 	ksu_observer_exit();
 
+	// exit_log_step("ksud_exit");
 	ksu_ksud_exit();
 
+	// exit_log_step("syscall_hook_manager_exit");
 	ksu_syscall_hook_manager_exit();
 
+	// exit_log_step("supercalls_exit");
 	ksu_supercalls_exit();
 
+	// exit_log_step("feature_exit");
 	ksu_feature_exit();
 
-	if (ksu_cred) {
-		put_cred(ksu_cred);
-	}
+	// exit_log_step("detach_cred");
+	/* Leak ksu_cred: revert_creds may put it after our rcu_barrier */
+	ksu_cred = NULL;
+
+	// exit_log_step("rcu_barrier");
+	rcu_barrier();
+	// exit_log_step("final_flush");
+	flush_workqueue(system_wq);
+
+	// exit_log_step("done");
+	// exit_log_close();
 }
 
 module_init(kernelsu_init);
