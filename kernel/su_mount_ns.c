@@ -5,6 +5,7 @@
 #include <linux/fs.h>
 #include <linux/fs_struct.h>
 #include <linux/limits.h>
+#include <linux/module.h>
 #include <linux/namei.h>
 #include <linux/proc_ns.h>
 #include <linux/pid.h>
@@ -173,6 +174,7 @@ static void ksu_setup_mount_ns_tw_func(struct callback_head *cb)
     }
     revert_creds(old_cred);
     kfree(tw);
+    module_put(THIS_MODULE);
 }
 
 void setup_mount_ns(int32_t ns_mode)
@@ -199,9 +201,14 @@ void setup_mount_ns(int32_t ns_mode)
         pr_err("no mem for tw! skip mnt_ns magic for pid: %d.\n", current->pid);
         return;
     }
+    if (!try_module_get(THIS_MODULE)) {
+        kfree(tw);
+        return;
+    }
     tw->cb.func = ksu_setup_mount_ns_tw_func;
     tw->ns_mode = ns_mode;
     if (task_work_add(current, &tw->cb, TWA_RESUME)) {
+        module_put(THIS_MODULE);
         kfree(tw);
         pr_err("add task work failed! skip mnt_ns magic for pid: %d.\n",
                current->pid);
