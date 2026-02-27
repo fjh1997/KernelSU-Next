@@ -150,40 +150,26 @@ void kernelsu_exit(void)
 	exit_log_step("feature_exit");
 	ksu_feature_exit();
 
-	exit_log_step("put_cred");
-	if (ksu_cred) {
-		put_cred(ksu_cred);
-		ksu_cred = NULL;
-	}
-
+	exit_log_step("detach_cred");
 	/*
-	 * put_cred() defers the actual freeing via call_rcu(&cred->rcu,
-	 * put_cred_rcu).  The RCU callback put_cred_rcu calls
-	 * security_cred_free() which may access data associated with our
-	 * module.  rcu_barrier() waits for all pending RCU callbacks to
-	 * complete before we return, preventing a use-after-free when
-	 * free_module() reclaims our code/data pages.
+	 * Intentionally leak ksu_cred (~300 bytes) instead of calling
+	 * put_cred().  Other code paths (override_creds/revert_creds in
+	 * su_mount_ns, kernel_umount) may still hold references that will
+	 * be put after our rcu_barrier, causing put_cred_rcu to run from
+	 * the rcuop kthread and access freed module memory.  Leaking the
+	 * cred avoids the deferred RCU callback entirely.
 	 */
-	exit_log_step("rcu_barrier_1");
-	rcu_barrier();
+	ksu_cred = NULL;
 
-	/* Sub-exit functions (fops_proxy restore, fput of hooked files) may
-	 * have scheduled new delayed fput work.  Flush it, then drain any
-	 * new RCU callbacks that the fput work may have queued (e.g. a
-	 * put_cred from __fput → security_file_free path).              */
+	/* Drain any pending kfree_rcu callbacks (e.g. allowlist perm_data)
+	 * and delayed fput work that sub-exit functions may have queued.  */
+	exit_log_step("rcu_barrier");
+	rcu_barrier();
 	exit_log_step("final_flush");
 	flush_workqueue(system_wq);
 
 	exit_log_step("done");
 	exit_log_close();
-
-	/*
-	 * Final synchronisation: the flush_workqueue and filp_close above
-	 * may have triggered additional put_cred / call_rcu callbacks.
-	 * A second rcu_barrier ensures every RCU callback that could
-	 * reference our code/data has finished before free_module() runs.
-	 */
-	rcu_barrier();
 }
 
 module_init(kernelsu_init);
