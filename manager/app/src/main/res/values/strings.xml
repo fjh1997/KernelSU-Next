@@ -175,7 +175,7 @@
     <string name="settings_uninstall_temporary">Uninstall temporarily</string>
     <string name="settings_uninstall_permanent">Uninstall permanently</string>
     <string name="settings_restore_stock_image">Restore stock image</string>
-    <string name="settings_uninstall_temporary_message">Temporarily uninstall KernelSU Next, restore to original state after next reboot.</string>
+    <string name="settings_uninstall_temporary_message">Temporarily uninstall KernelSU Next, restore to original state after next reboot.\n\n⚠️ WARNING: All processes holding root permissions (e.g. adb su shells) will be forcefully killed!</string>
     <string name="settings_uninstall_permanent_message">Uninstalling KernelSU Next (root and all modules) completely and permanently.</string>
     <string name="settings_restore_stock_image_message">Restore the stock factory image (if a backup exists), usually used before OTA; if you need to uninstall KernelSU Next, please use \"Uninstall permanently\".</string>
     <string name="flashing">Flashing</string>
