@@ -579,9 +579,6 @@ fun UninstallItem(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val uninstallConfirmDialog = rememberConfirmDialog()
-    val showTodo = {
-        Toast.makeText(context, "TODO", Toast.LENGTH_SHORT).show()
-    }
     val uninstallDialog = rememberUninstallDialog { uninstallType ->
         scope.launch {
             val result = uninstallConfirmDialog.awaitConfirm(
@@ -591,7 +588,38 @@ fun UninstallItem(
             if (result == ConfirmResult.Confirmed) {
                 withLoading {
                     when (uninstallType) {
-                        UninstallType.TEMPORARY -> showTodo()
+                        UninstallType.TEMPORARY -> {
+                            withContext(Dispatchers.IO) {
+                                // Kill all processes holding KSU fds (adb su, zygiskd, etc.)
+                                Natives.prepareUnload()
+                                // Close manager's own driver fd to release module refcount
+                                Natives.closeDriverFd()
+                                withNewRootShell(globalMnt = true) {
+                                    newJob().add(
+                                        """
+                                        # Unmount KSU module overlays
+                                        grep "/data/adb" /proc/1/mounts | awk '{print ${'$'}2}' | sort -r | while IFS= read -r mnt; do
+                                            umount -l "${'$'}mnt" 2>/dev/null
+                                        done
+                                        # Daemonize: close inherited ksu fds, rmmod, restart zygote
+                                        (
+                                          exec 0</dev/null 1>/dev/null 2>/dev/null
+                                          for fd in ${'$'}(ls /proc/self/fd/ 2>/dev/null); do
+                                            [ "${'$'}fd" -gt 2 ] && eval "exec ${'$'}fd>&-" 2>/dev/null
+                                          done
+                                          n=0; while [ ${'$'}n -lt 30 ]; do
+                                            rmmod kernelsu 2>/dev/null && break
+                                            sleep 1; n=${'$'}((n+1))
+                                          done
+                                          setprop ctl.restart zygote
+                                        ) &
+                                        """.trimIndent()
+                                    ).exec()
+                                }
+                            }
+                            // Kill manager so it restarts and shows correct status
+                            android.os.Process.killProcess(android.os.Process.myPid())
+                        }
                         UninstallType.PERMANENT -> navigator.navigate(
                             FlashScreenDestination(FlashIt.FlashUninstall)
                         )
@@ -647,11 +675,14 @@ enum class UninstallType(val title: Int, val message: Int, val icon: ImageVector
 @Composable
 fun rememberUninstallDialog(onSelected: (UninstallType) -> Unit): DialogHandle {
     return rememberCustomDialog { dismiss ->
-        val options = listOf(
-            // UninstallType.TEMPORARY,
-            UninstallType.PERMANENT,
-            UninstallType.RESTORE_STOCK_IMAGE
-        )
+        val options = buildList {
+            // Temporary unload only available in LKM mode (rmmod)
+            if (Natives.isLkmMode) {
+                add(UninstallType.TEMPORARY)
+            }
+            add(UninstallType.PERMANENT)
+            add(UninstallType.RESTORE_STOCK_IMAGE)
+        }
         val listOptions = options.map {
             ListOption(
                 titleText = stringResource(it.title),

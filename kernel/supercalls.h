@@ -153,6 +153,7 @@ struct ksu_add_try_umount_cmd {
 #define KSU_IOCTL_ADD_TRY_UMOUNT _IOC(_IOC_WRITE, 'K', 18, 0)
 #define KSU_IOCTL_GET_HOOK_MODE _IOC(_IOC_READ, 'K', 98, 0)
 #define KSU_IOCTL_GET_VERSION_TAG _IOC(_IOC_READ, 'K', 99, 0)
+#define KSU_IOCTL_PREPARE_UNLOAD _IOC(_IOC_NONE, 'K', 100, 0) /* Kill all KSU fd holders for rmmod */
 
 // IOCTL handler types
 typedef int (*ksu_ioctl_handler_t)(void __user *arg);

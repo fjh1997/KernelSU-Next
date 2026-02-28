@@ -1,4 +1,5 @@
 #include <linux/compiler.h>
+#include <linux/module.h>
 #include <linux/version.h>
 #include <linux/slab.h>
 #include <linux/task_work.h>
@@ -26,6 +27,7 @@ static void ksu_install_manager_fd_tw_func(struct callback_head *cb)
 {
     ksu_install_fd();
     kfree(cb);
+    module_put(THIS_MODULE); /* Release module ref taken before task_work_add */
 }
 
 int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
@@ -47,8 +49,14 @@ int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
         struct callback_head *cb = kzalloc(sizeof(*cb), GFP_ATOMIC);
         if (!cb)
             return 0;
+        /* Pin module so install-fd callback code isn't freed before it runs */
+        if (!try_module_get(THIS_MODULE)) {
+            kfree(cb);
+            return 0;
+        }
         cb->func = ksu_install_manager_fd_tw_func;
         if (task_work_add(current, cb, TWA_RESUME)) {
+            module_put(THIS_MODULE);
             kfree(cb);
             pr_warn("install manager fd add task_work failed\n");
         }
