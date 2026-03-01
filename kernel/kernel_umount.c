@@ -11,7 +11,6 @@
 #include <linux/printk.h>
 #include <linux/types.h>
 #include <linux/vmalloc.h>
-#include <uapi/linux/mount.h>
 
 #include "kernel_umount.h"
 #include "klog.h" // IWYU pragma: keep
@@ -185,7 +184,7 @@ static bool umount_module_mounts_scan(void)
 		return false;
 	}
 
-	buf = kvmalloc(MOUNTINFO_BUF_SIZE, GFP_KERNEL);
+	buf = vmalloc(MOUNTINFO_BUF_SIZE);
 	if (!buf) {
 		filp_close(fp, NULL);
 		return false;
@@ -195,7 +194,7 @@ static bool umount_module_mounts_scan(void)
 	filp_close(fp, NULL);
 
 	if (len <= 0) {
-		kvfree(buf);
+		vfree(buf);
 		return false;
 	}
 	buf[len] = '\0';
@@ -250,7 +249,7 @@ static bool umount_module_mounts_scan(void)
 		line = next_line;
 	}
 
-	kvfree(buf);
+	vfree(buf);
 	return found;
 }
 
