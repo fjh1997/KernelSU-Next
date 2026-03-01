@@ -627,17 +627,14 @@ fun UninstallItem(
                                           for fd in ${'$'}(ls /proc/self/fd/ 2>/dev/null); do
                                             [ "${'$'}fd" -gt 2 ] && eval "exec ${'$'}fd>&-" 2>/dev/null
                                           done
-                                          # Kill zygote BEFORE rmmod!
+                                          # Restart zygote BEFORE rmmod!
                                           # Both setprop and kill are blocked by SELinux MAC after rmmod,
                                           # because kernelsu_exit() -> revert_kernelsu_rules() strips all
-                                          # custom SELinux rules including "allow su zygote:process sigkill".
-                                          # Killing zygote while the module is still loaded ensures SELinux allows it.
-                                          # init will auto-restart zygote; by then rmmod will have completed,
+                                          # custom SELinux rules for the su domain.
+                                          # Doing it here (before rmmod) ensures SELinux still allows it.
+                                          # init will restart zygote; by then rmmod will have completed,
                                           # so the new zygote starts from a clean kernel without hooks.
-                                          kill -9 ${'$'}(pidof zygote64) 2>/dev/null
-                                          kill -9 ${'$'}(pidof zygote) 2>/dev/null
-                                          kill -9 ${'$'}(pidof usap32) 2>/dev/null
-                                          kill -9 ${'$'}(pidof usap64) 2>/dev/null
+                                          setprop ctl.restart zygote
                                           # Now rmmod — the module can be safely unloaded
                                           n=0; while [ ${'$'}n -lt 30 ]; do
                                             rmmod kernelsu 2>/dev/null && break
