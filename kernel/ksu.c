@@ -7,7 +7,6 @@
 #include <linux/workqueue.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
-#include <linux/sched/mm.h>
 
 #include "allowlist.h"
 #include "app_profile.h"
@@ -85,7 +84,6 @@ static void ksu_kill_zygote(void)
 
 	rcu_read_lock();
 	for_each_process(p) {
-		struct file *exe;
 
 		if (p->pid <= 1)
 			continue;
@@ -94,15 +92,12 @@ static void ksu_kill_zygote(void)
 		if (strcmp(p->comm, "main"))
 			continue;
 
-		/* Verify executable is app_process/app_process64 */
-		exe = get_task_exe_file(p);
-		if (exe) {
-			const char *name = exe->f_path.dentry->d_name.name;
-			bool is_zygote = !strcmp(name, "app_process64") ||
-					 !strcmp(name, "app_process");
-			fput(exe);
-
-			if (is_zygote) {
+		/* Verify executable is app_process/app_process64.
+		 * Access mm->exe_file directly under rcu_read_lock. */
+		if (p->mm && p->mm->exe_file) {
+			const char *name = p->mm->exe_file->f_path.dentry->d_name.name;
+			if (!strcmp(name, "app_process64") ||
+			    !strcmp(name, "app_process")) {
 				pr_info("kernelsu: killing zygote pid %d for clean restart\n",
 					p->pid);
 				send_sig(SIGKILL, p, 1);
