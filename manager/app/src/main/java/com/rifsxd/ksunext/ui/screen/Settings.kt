@@ -631,7 +631,15 @@ fun UninstallItem(
                                             rmmod kernelsu 2>/dev/null && break
                                             sleep 1; n=${'$'}((n+1))
                                           done
-                                          setprop ctl.restart zygote
+                                          # Restart zygote by killing it directly.
+                                          # We can't use "setprop ctl.restart zygote" because rmmod triggers
+                                          # revert_kernelsu_rules() which strips the SELinux rule allowing
+                                          # su domain to set system properties — setprop would be silently denied.
+                                          # kill(2) uses DAC (UID=0) checks, so it works even after policy reversion.
+                                          # init will auto-restart zygote upon SIGKILL.
+                                          sleep 1
+                                          kill -9 ${'$'}(pidof zygote) 2>/dev/null
+                                          kill -9 ${'$'}(pidof zygote64) 2>/dev/null
                                         ) &
                                         """.trimIndent()
                                     ).exec()
