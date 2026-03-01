@@ -5,6 +5,10 @@
 #include <linux/rcupdate.h>
 #include <linux/version.h>
 #include <linux/workqueue.h>
+#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/signal.h>
+#include <linux/pid.h>
 
 #include "allowlist.h"
 #include "app_profile.h"
@@ -64,12 +68,53 @@ int __init kernelsu_init(void)
 
 extern void ksu_observer_exit(void);
 
+/*
+ * Kill all zygote/usap processes so init restarts them from a clean kernel.
+ *
+ * This MUST be called between ksu_umount_all() and revert_kernelsu_rules():
+ *   - After umount: module overlays are removed, so new zygote won't re-mount them
+ *   - Before SELinux revert: kernel-level signal is SELinux-exempt anyway, but
+ *     the module's hooks are still being torn down, so init cannot restart
+ *     zygote until module_exit() completes — guaranteeing the new zygote is clean.
+ *
+ * User-space cannot solve this timing problem:
+ *   - Before rmmod: zygote restarts while module is loaded → gets re-injected
+ *   - After rmmod:  revert_kernelsu_rules() has removed SELinux rules for su domain
+ *                   → both setprop and kill are denied by SELinux MAC
+ */
+static void ksu_kill_zygote(void)
+{
+	struct task_struct *p;
+
+	rcu_read_lock();
+	for_each_process(p) {
+		const char *name = p->comm;
+		if (!strcmp(name, "main") && p->pid == 1)
+			continue; /* skip init */
+		if (!strcmp(name, "zygote") ||
+		    !strcmp(name, "zygote64") ||
+		    !strcmp(name, "usap32") ||
+		    !strcmp(name, "usap64") ||
+		    !strcmp(name, "webview_zygote")) {
+			pr_info("kernelsu: killing %s (pid %d) for clean restart\n",
+				name, p->pid);
+			send_sig(SIGKILL, p, 1);
+		}
+	}
+	rcu_read_unlock();
+}
+
 void kernelsu_exit(void)
 {
 	/* === Root trace cleanup: must happen before subsystem teardown === */
 
 	/* Unmount all module overlays (needs ksu_cred, must be first) */
 	ksu_umount_all();
+
+	/* Kill zygote/usap so init restarts them after module fully exits.
+	 * Must be after umount (so remounts don't re-apply) and before
+	 * revert_kernelsu_rules (which strips SELinux permissions). */
+	ksu_kill_zygote();
 
 	/* Revert SELinux policy: set su/ksu_file domains to enforcing,
 	 * clear all avtab allow rules for these domains */

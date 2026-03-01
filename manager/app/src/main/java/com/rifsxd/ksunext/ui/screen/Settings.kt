@@ -621,21 +621,14 @@ fun UninstallItem(
                                                     ;;
                                             esac
                                         done
-                                        # Daemonize: close inherited ksu fds, kill zygote, rmmod
+                                        # Daemonize: close inherited ksu fds, then rmmod.
+                                        # Zygote kill is handled by kernelsu_exit() -> ksu_kill_zygote()
+                                        # in the kernel, between umount cleanup and SELinux revert.
                                         (
                                           exec 0</dev/null 1>/dev/null 2>/dev/null
                                           for fd in ${'$'}(ls /proc/self/fd/ 2>/dev/null); do
                                             [ "${'$'}fd" -gt 2 ] && eval "exec ${'$'}fd>&-" 2>/dev/null
                                           done
-                                          # Restart zygote BEFORE rmmod!
-                                          # Both setprop and kill are blocked by SELinux MAC after rmmod,
-                                          # because kernelsu_exit() -> revert_kernelsu_rules() strips all
-                                          # custom SELinux rules for the su domain.
-                                          # Doing it here (before rmmod) ensures SELinux still allows it.
-                                          # init will restart zygote; by then rmmod will have completed,
-                                          # so the new zygote starts from a clean kernel without hooks.
-                                          setprop ctl.restart zygote
-                                          # Now rmmod — the module can be safely unloaded
                                           n=0; while [ ${'$'}n -lt 30 ]; do
                                             rmmod kernelsu 2>/dev/null && break
                                             sleep 1; n=${'$'}((n+1))
