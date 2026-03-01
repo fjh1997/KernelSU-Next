@@ -605,6 +605,13 @@ fun UninstallItem(
                                         umount -l /system/bin/app_process32 2>/dev/null
                                         umount -l /system/bin/app_process64 2>/dev/null
                                         killall -9 zygiskd 2>/dev/null
+                                        
+                                        # Failsafe for Certificate Modules (e.g. MoveCertificate)
+                                        # These often use anonymous tmpfs over the APEX cert dir.
+                                        # We only unmount if the mount is a tmpfs (native Android 14+ CA APEX is erofs/ext4, not tmpfs!)
+                                        cat /proc/1/mountinfo | grep -E '/apex/com\.android\.conscrypt(@[0-9]+)?/cacerts' | awk '{if ($$9 == "tmpfs") print $$5}' | while IFS= read -r mnt; do
+                                            umount -l "${'$'}mnt" 2>/dev/null
+                                        done
                                         # Daemonize: close inherited ksu fds, rmmod, restart zygote
                                         (
                                           exec 0</dev/null 1>/dev/null 2>/dev/null
