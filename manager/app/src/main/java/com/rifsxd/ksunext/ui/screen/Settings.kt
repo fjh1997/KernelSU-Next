@@ -605,15 +605,6 @@ fun UninstallItem(
                                         umount -l /system/bin/app_process32 2>/dev/null
                                         umount -l /system/bin/app_process64 2>/dev/null
                                         killall -9 zygiskd 2>/dev/null
-                                        
-                                        # Failsafe for LSPosed, Certificates, and other tmpfs hooks
-                                        umount -l /data/resource-cache 2>/dev/null
-                                        umount -l /system/etc/security/cacerts 2>/dev/null
-                                        umount -l /data/system/package_cache 2>/dev/null
-                                        umount -l /apex/com.android.conscrypt/cacerts 2>/dev/null
-                                        for c in /apex/com.android.conscrypt@*/cacerts; do
-                                            umount -l "${'$'}c" 2>/dev/null
-                                        done
                                         # Daemonize: close inherited ksu fds, rmmod, restart zygote
                                         (
                                           exec 0</dev/null 1>/dev/null 2>/dev/null
