@@ -111,10 +111,7 @@ void kernelsu_exit(void)
 	/* Unmount all module overlays (needs ksu_cred, must be first) */
 	ksu_umount_all();
 
-	/* Kill zygote/usap so init restarts them after module fully exits.
-	 * Must be after umount (so remounts don't re-apply) and before
-	 * revert_kernelsu_rules (which strips SELinux permissions). */
-	ksu_kill_zygote();
+
 
 	/* Revert SELinux policy: set su/ksu_file domains to enforcing,
 	 * clear all avtab allow rules for these domains */
@@ -153,6 +150,13 @@ void kernelsu_exit(void)
 
 	rcu_barrier();
 	flush_workqueue(system_wq);
+
+	/* Kill zygote/usap LAST — after every hook, tracker, and subsystem
+	 * is fully torn down.  init will auto-restart zygote into a kernel
+	 * that no longer has any KSU code, guaranteeing a clean process.
+	 * send_sig() is a kernel-internal function immune to SELinux MAC,
+	 * so it works even after revert_kernelsu_rules(). */
+	ksu_kill_zygote();
 }
 
 module_init(kernelsu_init);
