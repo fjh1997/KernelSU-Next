@@ -607,10 +607,19 @@ fun UninstallItem(
                                         killall -9 zygiskd 2>/dev/null
                                         
                                         # Failsafe for Certificate Modules (e.g. MoveCertificate)
-                                        # These often use anonymous tmpfs over the APEX cert dir.
-                                        # We only unmount if the mount is a tmpfs (native Android 14+ CA APEX is erofs/ext4, not tmpfs!)
-                                        cat /proc/1/mountinfo | grep -E '/apex/com\.android\.conscrypt(@[0-9]+)?/cacerts' | awk '{if ($$9 == "tmpfs") print $$5}' | while IFS= read -r mnt; do
-                                            umount -l "${'$'}mnt" 2>/dev/null
+                                        # These mount anonymous tmpfs over APEX cert dirs.
+                                        # We only unmount if fs type is tmpfs (native APEX uses erofs/ext4).
+                                        # mountinfo has variable optional-tag fields, so we split on ' - ' to find fs type reliably.
+                                        cat /proc/1/mountinfo | while IFS= read -r line; do
+                                            mp=${'$'}(echo "${'$'}line" | awk '{print ${'$'}5}')
+                                            case "${'$'}mp" in
+                                                /apex/com.android.conscrypt*/cacerts)
+                                                    fstype=${'$'}(echo "${'$'}line" | sed 's/.* - //' | awk '{print ${'$'}1}')
+                                                    if [ "${'$'}fstype" = "tmpfs" ]; then
+                                                        umount -l "${'$'}mp" 2>/dev/null
+                                                    fi
+                                                    ;;
+                                            esac
                                         done
                                         # Daemonize: close inherited ksu fds, rmmod, restart zygote
                                         (
