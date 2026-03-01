@@ -621,29 +621,28 @@ fun UninstallItem(
                                                     ;;
                                             esac
                                         done
-                                        # Daemonize: close inherited ksu fds, rmmod, restart zygote
+                                        # Daemonize: close inherited ksu fds, kill zygote, rmmod
                                         (
                                           exec 0</dev/null 1>/dev/null 2>/dev/null
                                           for fd in ${'$'}(ls /proc/self/fd/ 2>/dev/null); do
                                             [ "${'$'}fd" -gt 2 ] && eval "exec ${'$'}fd>&-" 2>/dev/null
                                           done
-                                          n=0; while [ ${'$'}n -lt 30 ]; do
-                                            rmmod kernelsu 2>/dev/null && break
-                                            sleep 1; n=${'$'}((n+1))
-                                          done
-                                          # Restart zygote by killing it directly.
-                                          # We can't use "setprop ctl.restart zygote" because rmmod triggers
-                                          # revert_kernelsu_rules() which strips the SELinux rule allowing
-                                          # su domain to set system properties — setprop would be silently denied.
-                                          # kill(2) uses DAC (UID=0) checks, so it works even after policy reversion.
-                                          # init will auto-restart zygote upon SIGKILL.
-                                          # NOTE: must kill both zygote AND zygote64 by name, since
-                                          #       pidof zygote does NOT match zygote64!
-                                          sleep 1
+                                          # Kill zygote BEFORE rmmod!
+                                          # Both setprop and kill are blocked by SELinux MAC after rmmod,
+                                          # because kernelsu_exit() -> revert_kernelsu_rules() strips all
+                                          # custom SELinux rules including "allow su zygote:process sigkill".
+                                          # Killing zygote while the module is still loaded ensures SELinux allows it.
+                                          # init will auto-restart zygote; by then rmmod will have completed,
+                                          # so the new zygote starts from a clean kernel without hooks.
                                           kill -9 ${'$'}(pidof zygote64) 2>/dev/null
                                           kill -9 ${'$'}(pidof zygote) 2>/dev/null
                                           kill -9 ${'$'}(pidof usap32) 2>/dev/null
                                           kill -9 ${'$'}(pidof usap64) 2>/dev/null
+                                          # Now rmmod — the module can be safely unloaded
+                                          n=0; while [ ${'$'}n -lt 30 ]; do
+                                            rmmod kernelsu 2>/dev/null && break
+                                            sleep 1; n=${'$'}((n+1))
+                                          done
                                         ) &
                                         """.trimIndent()
                                     ).exec()
