@@ -597,10 +597,14 @@ fun UninstallItem(
                                 withNewRootShell(globalMnt = true) {
                                     newJob().add(
                                         """
-                                        # Unmount KSU module overlays
-                                        grep "/data/adb" /proc/1/mounts | awk '{print ${'$'}2}' | sort -r | while IFS= read -r mnt; do
+                                        # Unmount KSU module overlays and Zygisk manual mounts (using mountinfo to catch bind mounts)
+                                        cat /proc/1/mountinfo | grep -E '(/data/adb|/adb/|KSU|KSUNext)' | awk '{print ${'$'}5}' | grep -E '^/(system|vendor|product|system_ext|bionic)' | sort -r | while IFS= read -r mnt; do
                                             umount -l "${'$'}mnt" 2>/dev/null
                                         done
+                                        # Failsafe for Zygisk Next manual mounts (which may use anonymous tmpfs)
+                                        umount -l /system/bin/app_process32 2>/dev/null
+                                        umount -l /system/bin/app_process64 2>/dev/null
+                                        killall -9 zygiskd 2>/dev/null
                                         # Daemonize: close inherited ksu fds, rmmod, restart zygote
                                         (
                                           exec 0</dev/null 1>/dev/null 2>/dev/null
