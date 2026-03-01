@@ -637,9 +637,13 @@ fun UninstallItem(
                                           # su domain to set system properties — setprop would be silently denied.
                                           # kill(2) uses DAC (UID=0) checks, so it works even after policy reversion.
                                           # init will auto-restart zygote upon SIGKILL.
+                                          # NOTE: must kill both zygote AND zygote64 by name, since
+                                          #       pidof zygote does NOT match zygote64!
                                           sleep 1
-                                          kill -9 ${'$'}(pidof zygote) 2>/dev/null
                                           kill -9 ${'$'}(pidof zygote64) 2>/dev/null
+                                          kill -9 ${'$'}(pidof zygote) 2>/dev/null
+                                          kill -9 ${'$'}(pidof usap32) 2>/dev/null
+                                          kill -9 ${'$'}(pidof usap64) 2>/dev/null
                                         ) &
                                         """.trimIndent()
                                     ).exec()
