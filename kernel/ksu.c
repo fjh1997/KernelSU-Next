@@ -7,6 +7,7 @@
 #include <linux/workqueue.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
+#include <linux/sched/mm.h>
 
 #include "allowlist.h"
 #include "app_profile.h"
@@ -72,10 +73,11 @@ extern void ksu_observer_exit(void);
  * Called after ksu_syscall_hook_manager_exit() so all hooks are removed —
  * init cannot re-inject hooks into the restarted zygote.
  *
- * IMPORTANT: Android's zygote processes have task->comm == "main"
- * (set by the JVM), NOT "zygote"/"zygote64" (those only appear in
- * /proc/pid/cmdline).  We identify them by: PPID == init (pid 1)
- * and comm == "main".
+ * We identify zygote by THREE conditions (to avoid false positives like
+ * Qualcomm's qcrilNrd which also has PPID=1 and comm="main"):
+ *   1. PPID == 1 (direct child of init)
+ *   2. comm == "main" (JVM sets the main thread name)
+ *   3. exe == app_process or app_process64
  */
 static void ksu_kill_zygote(void)
 {
@@ -83,14 +85,28 @@ static void ksu_kill_zygote(void)
 
 	rcu_read_lock();
 	for_each_process(p) {
+		struct file *exe;
+
 		if (p->pid <= 1)
 			continue;
-		/* Zygote is a direct child of init with comm "main" */
-		if (p->real_parent && p->real_parent->pid == 1 &&
-		    !strcmp(p->comm, "main")) {
-			pr_info("kernelsu: killing pid %d (comm=%s) for zygote restart\n",
-				p->pid, p->comm);
-			send_sig(SIGKILL, p, 1);
+		if (!p->real_parent || p->real_parent->pid != 1)
+			continue;
+		if (strcmp(p->comm, "main"))
+			continue;
+
+		/* Verify executable is app_process/app_process64 */
+		exe = get_task_exe_file(p);
+		if (exe) {
+			const char *name = exe->f_path.dentry->d_name.name;
+			bool is_zygote = !strcmp(name, "app_process64") ||
+					 !strcmp(name, "app_process");
+			fput(exe);
+
+			if (is_zygote) {
+				pr_info("kernelsu: killing zygote pid %d for clean restart\n",
+					p->pid);
+				send_sig(SIGKILL, p, 1);
+			}
 		}
 	}
 	rcu_read_unlock();
