@@ -97,6 +97,8 @@ void apply_kernelsu_rules()
     mutex_unlock(&ksu_rules);
 }
 
+static void reset_avc_cache();
+
 void revert_kernelsu_rules()
 {
 	struct policydb *db;
