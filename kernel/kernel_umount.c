@@ -10,7 +10,7 @@
 #include <linux/path.h>
 #include <linux/printk.h>
 #include <linux/types.h>
-#include <linux/vmalloc.h>
+
 
 #include "kernel_umount.h"
 #include "klog.h" // IWYU pragma: keep
@@ -159,112 +159,7 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 	return 0;
 }
 
-#define MOUNTINFO_PATH "/proc/1/mountinfo"
-#define MOUNTINFO_BUF_SIZE (256 * 1024)
-#define MODULE_MOUNT_ROOT "/adb/"
-#define UMOUNT_SCAN_RETRIES 10
 
-/*
- * Scan /proc/1/mountinfo for bind mounts whose root path contains
- * "/adb/modules/" and unmount them via MNT_DETACH.
- * Returns true if any module mounts were found (and unmount attempted).
- */
-static bool umount_module_mounts_scan(void)
-{
-	struct file *fp;
-	char *buf;
-	loff_t pos = 0;
-	ssize_t len;
-	bool found = false;
-
-	fp = filp_open(MOUNTINFO_PATH, O_RDONLY, 0);
-	if (IS_ERR(fp)) {
-		pr_warn("ksu_umount_all: cannot open %s: %ld\n",
-			MOUNTINFO_PATH, PTR_ERR(fp));
-		return false;
-	}
-
-	buf = vmalloc(MOUNTINFO_BUF_SIZE);
-	if (!buf) {
-		filp_close(fp, NULL);
-		return false;
-	}
-
-	len = kernel_read(fp, buf, MOUNTINFO_BUF_SIZE - 1, &pos);
-	filp_close(fp, NULL);
-
-	if (len <= 0) {
-		vfree(buf);
-		return false;
-	}
-	buf[len] = '\0';
-
-	/* Parse each line of mountinfo */
-	char *line = buf;
-	while (line && *line) {
-		char *next_line = strchr(line, '\n');
-		if (next_line)
-			*next_line++ = '\0';
-
-		/*
-		 * mountinfo fields (space-separated):
-		 *  [0] mount_id
-		 *  [1] parent_id
-		 *  [2] major:minor
-		 *  [3] root         -- path within the source filesystem
-		 *  [4] mount_point  -- where it appears in the VFS
-		 *  ...
-		 */
-		char *p = line;
-		char *root = NULL;
-		char *mount_point = NULL;
-		int i;
-
-		for (i = 0; i < 5 && *p; i++) {
-			while (*p == ' ')
-				p++;
-			if (!*p)
-				break;
-
-			char *start = p;
-			while (*p && *p != ' ')
-				p++;
-			if (*p)
-				*p++ = '\0';
-
-			if (i == 3)
-				root = start;
-			else if (i == 4)
-				mount_point = start;
-		}
-
-		if (root && mount_point &&
-		    strstr(root, MODULE_MOUNT_ROOT)) {
-			pr_info("ksu_umount_all: scan: %s (root=%s)\n",
-				mount_point, root);
-			try_umount(mount_point, MNT_DETACH);
-			found = true;
-		}
-
-		line = next_line;
-	}
-
-	vfree(buf);
-	return found;
-}
-
-/*
- * Repeatedly scan and unmount module mounts until none remain.
- * Multiple passes handle stacked / overlapping mounts.
- */
-static void umount_module_mounts(void)
-{
-	int retries = UMOUNT_SCAN_RETRIES;
-
-	while (retries-- > 0 && umount_module_mounts_scan()) {
-		pr_info("ksu_umount_all: rescan (%d retries left)\n", retries);
-	}
-}
 
 void ksu_umount_all(void)
 {
@@ -292,8 +187,8 @@ void ksu_umount_all(void)
 	}
 	up_read(&mount_list_lock);
 
-	/* Step 2: scan init namespace for any remaining module mounts */
-	umount_module_mounts();
+	/* Third-party module mounts (Zygisk, LSPosed, MoveCertificate, etc.)
+	 * are handled by the Manager App's user-space cleanup script. */
 
 	revert_creds(saved);
 

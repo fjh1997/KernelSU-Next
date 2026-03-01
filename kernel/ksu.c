@@ -7,8 +7,6 @@
 #include <linux/workqueue.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
-#include <linux/signal.h>
-#include <linux/pid.h>
 
 #include "allowlist.h"
 #include "app_profile.h"
