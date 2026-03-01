@@ -158,6 +158,37 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 	return 0;
 }
 
+void ksu_umount_all(void)
+{
+	struct mount_entry *entry;
+	const struct cred *saved;
+
+	if (!ksu_module_mounted) {
+		pr_info("ksu_umount_all: no modules mounted, skip\n");
+		return;
+	}
+
+	if (!ksu_cred) {
+		pr_warn("ksu_umount_all: no ksu_cred, cannot umount\n");
+		return;
+	}
+
+	saved = override_creds(ksu_cred);
+
+	down_read(&mount_list_lock);
+	list_for_each_entry(entry, &mount_list, list) {
+		pr_info("ksu_umount_all: unmounting: %s flags 0x%x\n",
+			entry->umountable, entry->flags);
+		try_umount(entry->umountable, entry->flags);
+	}
+	up_read(&mount_list_lock);
+
+	revert_creds(saved);
+
+	ksu_module_mounted = false;
+	pr_info("ksu_umount_all: done\n");
+}
+
 void ksu_kernel_umount_init(void)
 {
 	if (ksu_register_feature_handler(&kernel_umount_handler)) {

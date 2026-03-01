@@ -16,6 +16,8 @@
 #include "supercalls.h"
 #include "ksu.h"
 #include "file_wrapper.h"
+#include "kernel_umount.h"
+#include "selinux/selinux.h"
 
 struct cred *ksu_cred;
 
@@ -64,6 +66,17 @@ extern void ksu_observer_exit(void);
 
 void kernelsu_exit(void)
 {
+	/* === Root trace cleanup: must happen before subsystem teardown === */
+
+	/* Unmount all module overlays (needs ksu_cred, must be first) */
+	ksu_umount_all();
+
+	/* Revert SELinux policy: set su/ksu_file domains to enforcing,
+	 * clear all avtab allow rules for these domains */
+	revert_kernelsu_rules();
+
+	/* === Normal subsystem teardown === */
+
 	/* Flush delayed fput work so __fput callbacks run while our code lives */
 	flush_workqueue(system_wq);
 
