@@ -598,7 +598,7 @@ fun UninstallItem(
                                     newJob().add(
                                         """
                                         # Unmount KSU module overlays and Zygisk manual mounts (using mountinfo to catch bind mounts)
-                                        cat /proc/1/mountinfo | grep -E '(/data/adb|/adb/|KSU|KSUNext)' | awk '{print ${'$'}5}' | grep -E '^/(system|vendor|product|system_ext|bionic|apex)' | sort -r | while IFS= read -r mnt; do
+                                        cat /proc/1/mountinfo | grep -E '(/data/adb|/adb/|KSU|KSUNext)' | awk '{print ${'$'}5}' | grep -E '^/(system|vendor|product|system_ext|bionic|apex|data/adb|adb)' | sort -r | while IFS= read -r mnt; do
                                             umount -l "${'$'}mnt" 2>/dev/null
                                         done
                                         # Failsafe for Zygisk Next manual mounts (which may use anonymous tmpfs)
