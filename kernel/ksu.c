@@ -139,6 +139,11 @@ void kernelsu_exit(void)
 
 	ksu_syscall_hook_manager_exit();
 
+	/* Kill zygote/usap after all hooks are removed.
+	 * Syscall hooks are gone so init cannot re-inject the new zygote.
+	 * Must be before rcu_barrier() so kernel structures are still valid. */
+	ksu_kill_zygote();
+
 	ksu_supercalls_exit();
 
 	ksu_feature_exit();
@@ -148,13 +153,6 @@ void kernelsu_exit(void)
 
 	rcu_barrier();
 	flush_workqueue(system_wq);
-
-	/* Kill zygote/usap LAST — after every hook, tracker, and subsystem
-	 * is fully torn down.  init will auto-restart zygote into a kernel
-	 * that no longer has any KSU code, guaranteeing a clean process.
-	 * send_sig() is a kernel-internal function immune to SELinux MAC,
-	 * so it works even after revert_kernelsu_rules(). */
-	ksu_kill_zygote();
 }
 
 module_init(kernelsu_init);
