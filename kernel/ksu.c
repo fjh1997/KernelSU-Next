@@ -69,16 +69,13 @@ extern void ksu_observer_exit(void);
 /*
  * Kill all zygote/usap processes so init restarts them from a clean kernel.
  *
- * This MUST be called between ksu_umount_all() and revert_kernelsu_rules():
- *   - After umount: module overlays are removed, so new zygote won't re-mount them
- *   - Before SELinux revert: kernel-level signal is SELinux-exempt anyway, but
- *     the module's hooks are still being torn down, so init cannot restart
- *     zygote until module_exit() completes — guaranteeing the new zygote is clean.
+ * Called after ksu_syscall_hook_manager_exit() so all hooks are removed —
+ * init cannot re-inject hooks into the restarted zygote.
  *
- * User-space cannot solve this timing problem:
- *   - Before rmmod: zygote restarts while module is loaded → gets re-injected
- *   - After rmmod:  revert_kernelsu_rules() has removed SELinux rules for su domain
- *                   → both setprop and kill are denied by SELinux MAC
+ * IMPORTANT: Android's zygote processes have task->comm == "main"
+ * (set by the JVM), NOT "zygote"/"zygote64" (those only appear in
+ * /proc/pid/cmdline).  We identify them by: PPID == init (pid 1)
+ * and comm == "main".
  */
 static void ksu_kill_zygote(void)
 {
@@ -86,16 +83,13 @@ static void ksu_kill_zygote(void)
 
 	rcu_read_lock();
 	for_each_process(p) {
-		const char *name = p->comm;
-		if (!strcmp(name, "main") && p->pid == 1)
-			continue; /* skip init */
-		if (!strcmp(name, "zygote") ||
-		    !strcmp(name, "zygote64") ||
-		    !strcmp(name, "usap32") ||
-		    !strcmp(name, "usap64") ||
-		    !strcmp(name, "webview_zygote")) {
-			pr_info("kernelsu: killing %s (pid %d) for clean restart\n",
-				name, p->pid);
+		if (p->pid <= 1)
+			continue;
+		/* Zygote is a direct child of init with comm "main" */
+		if (p->real_parent && p->real_parent->pid == 1 &&
+		    !strcmp(p->comm, "main")) {
+			pr_info("kernelsu: killing pid %d (comm=%s) for zygote restart\n",
+				p->pid, p->comm);
 			send_sig(SIGKILL, p, 1);
 		}
 	}
