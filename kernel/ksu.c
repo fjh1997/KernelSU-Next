@@ -5,8 +5,6 @@
 #include <linux/rcupdate.h>
 #include <linux/version.h>
 #include <linux/workqueue.h>
-#include <linux/sched.h>
-#include <linux/sched/signal.h>
 
 #include "allowlist.h"
 #include "app_profile.h"
@@ -18,8 +16,6 @@
 #include "supercalls.h"
 #include "ksu.h"
 #include "file_wrapper.h"
-#include "kernel_umount.h"
-#include "selinux/selinux.h"
 
 struct cred *ksu_cred;
 
@@ -66,62 +62,8 @@ int __init kernelsu_init(void)
 
 extern void ksu_observer_exit(void);
 
-/*
- * Kill all zygote/usap processes so init restarts them from a clean kernel.
- *
- * Called after ksu_syscall_hook_manager_exit() so all hooks are removed —
- * init cannot re-inject hooks into the restarted zygote.
- *
- * We identify zygote by THREE conditions (to avoid false positives like
- * Qualcomm's qcrilNrd which also has PPID=1 and comm="main"):
- *   1. PPID == 1 (direct child of init)
- *   2. comm == "main" (JVM sets the main thread name)
- *   3. exe == app_process or app_process64
- */
-static void ksu_kill_zygote(void)
-{
-	struct task_struct *p;
-
-	rcu_read_lock();
-	for_each_process(p) {
-
-		if (p->pid <= 1)
-			continue;
-		if (!p->real_parent || p->real_parent->pid != 1)
-			continue;
-		if (strcmp(p->comm, "main"))
-			continue;
-
-		/* Verify executable is app_process/app_process64.
-		 * Access mm->exe_file directly under rcu_read_lock. */
-		if (p->mm && p->mm->exe_file) {
-			const char *name = p->mm->exe_file->f_path.dentry->d_name.name;
-			if (!strcmp(name, "app_process64") ||
-			    !strcmp(name, "app_process")) {
-				pr_info("kernelsu: killing zygote pid %d for clean restart\n",
-					p->pid);
-				send_sig(SIGKILL, p, 1);
-			}
-		}
-	}
-	rcu_read_unlock();
-}
-
 void kernelsu_exit(void)
 {
-	/* === Root trace cleanup: must happen before subsystem teardown === */
-
-	/* Unmount all module overlays (needs ksu_cred, must be first) */
-	ksu_umount_all();
-
-
-
-	/* Revert SELinux policy: set su/ksu_file domains to enforcing,
-	 * clear all avtab allow rules for these domains */
-	revert_kernelsu_rules();
-
-	/* === Normal subsystem teardown === */
-
 	/* Flush delayed fput work so __fput callbacks run while our code lives */
 	flush_workqueue(system_wq);
 
@@ -140,14 +82,7 @@ void kernelsu_exit(void)
 
 	ksu_observer_exit();
 
-	ksu_ksud_exit();
-
 	ksu_syscall_hook_manager_exit();
-
-	/* Kill zygote/usap after all hooks are removed.
-	 * Syscall hooks are gone so init cannot re-inject the new zygote.
-	 * Must be before rcu_barrier() so kernel structures are still valid. */
-	ksu_kill_zygote();
 
 	ksu_supercalls_exit();
 
@@ -158,6 +93,8 @@ void kernelsu_exit(void)
 
 	rcu_barrier();
 	flush_workqueue(system_wq);
+
+	ksu_ksud_exit();
 }
 
 module_init(kernelsu_init);
