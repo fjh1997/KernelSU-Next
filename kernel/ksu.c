@@ -144,11 +144,6 @@ void kernelsu_exit(void)
 
 	ksu_syscall_hook_manager_exit();
 
-	/* Kill zygote/usap after all hooks are removed.
-	 * Syscall hooks are gone so init cannot re-inject the new zygote.
-	 * Must be before rcu_barrier() so kernel structures are still valid. */
-	ksu_kill_zygote();
-
 	ksu_supercalls_exit();
 
 	ksu_feature_exit();
@@ -158,6 +153,10 @@ void kernelsu_exit(void)
 
 	rcu_barrier();
 	flush_workqueue(system_wq);
+
+	/* Kill zygote/usap after all hooks are removed and work is flushed.
+	 * Syscall hooks are gone so init cannot re-inject the new zygote. */
+	ksu_kill_zygote();
 }
 
 module_init(kernelsu_init);

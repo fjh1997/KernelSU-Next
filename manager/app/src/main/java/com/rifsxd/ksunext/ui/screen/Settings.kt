@@ -583,7 +583,11 @@ fun UninstallItem(
         scope.launch {
             val result = uninstallConfirmDialog.awaitConfirm(
                 title = context.getString(uninstallType.title),
-                content = context.getString(uninstallType.message)
+                content = if (uninstallType == UninstallType.TEMPORARY) {
+                    context.getString(uninstallType.message) + "\n\n" + context.getString(R.string.settings_uninstall_temporary_ui_warning)
+                } else {
+                    context.getString(uninstallType.message)
+                }
             )
             if (result == ConfirmResult.Confirmed) {
                 withLoading {
