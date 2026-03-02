@@ -374,6 +374,20 @@ Java_com_rifsxd_ksunext_Natives_setAvcSpoofEnabled(JNIEnv *env, jobject thiz, jb
     return set_avc_spoof_enabled(enabled);
 }
 
+/* JNI bridge for module unload preparation */
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_rifsxd_ksunext_Natives_prepareUnload(JNIEnv *env, jobject thiz) {
+    return prepare_unload();
+}
+
+/* JNI bridge for closing the cached KSU driver fd */
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_rifsxd_ksunext_Natives_closeDriverFd(JNIEnv *env, jobject thiz) {
+    close_driver_fd();
+}
+
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_com_rifsxd_ksunext_Natives_getUserName(JNIEnv *env, jobject thiz, jint uid) {

@@ -121,7 +121,41 @@ int ksu_observer_init(void)
 
 void ksu_observer_exit(void)
 {
-	unwatch_one_dir(&g_watch);
-	fsnotify_put_group(g);
+	if (!g || IS_ERR(g))
+		return;
+
+	/*
+	 * Do NOT destroy the fsnotify group or marks.  On this platform,
+	 * fsnotify_destroy_group() lacks fsnotify_wait_marks_destroyed():
+	 * destroying marks queues fsnotify_mark_destroy_workfn as a delayed
+	 * work that accesses group fields (mark_mutex, ops, etc.) AFTER
+	 * fsnotify_put_group() has already freed the group struct.
+	 *
+	 * Every combination of flush_workqueue / reorder / sleep failed
+	 * because flush_workqueue cannot flush delayed works whose timer
+	 * hasn't expired, and we have no access to the internal reaper_work
+	 * struct needed for flush_delayed_work.
+	 *
+	 * Instead, disable event delivery and intentionally leak:
+	 *  - Zero the mark mask so events skip our mark
+	 *  - Set group->shutdown so fsnotify_handle_event returns early
+	 *    (checked BEFORE group->ops is dereferenced)
+	 *  - Leak the group, mark, inode ref, and path ref (~1 KB total)
+	 *
+	 * Since no mark refcount reaches zero, the delayed reaper is never
+	 * triggered for our mark, eliminating the race entirely.
+	 * Leaked memory is reclaimed on reboot.
+	 */
+	if (g_watch.mark)
+		WRITE_ONCE(g_watch.mark->mask, 0);
+
+	spin_lock(&g->notification_lock);
+	g->shutdown = true;
+	spin_unlock(&g->notification_lock);
+
+	g = NULL;
+	g_watch.mark = NULL;
+	g_watch.inode = NULL;
+	memset(&g_watch.kpath, 0, sizeof(g_watch.kpath));
 	pr_info("observer exit done\n");
 }

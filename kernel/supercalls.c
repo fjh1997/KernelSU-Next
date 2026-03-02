@@ -8,6 +8,8 @@
 #include <linux/slab.h>
 #include <linux/kprobes.h>
 #include <linux/syscalls.h>
+#include <linux/module.h>
+#include <linux/sched/signal.h>
 #include <linux/task_work.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
@@ -513,6 +515,54 @@ static int do_get_version_tag(void __user *arg)
 	return 0;
 }
 
+/*
+ * Prepare for module unload by killing all processes that hold KSU file
+ * descriptors (ksu_driver + fdwrapper).  Both have f_op->owner == THIS_MODULE.
+ * This is necessary because fdwrapper fds are invisible to userspace (d_dname
+ * spoofs the path), so only the kernel can find them.
+ * Skips the calling process (manager) so it can proceed with rmmod.
+ */
+static int do_prepare_unload(void __user *arg)
+{
+	struct task_struct *task;
+
+	rcu_read_lock();
+	for_each_process(task) {
+		struct files_struct *files;
+		struct fdtable *fdt;
+		unsigned int fd;
+		bool found = false;
+
+		if (task->tgid == current->tgid)
+			continue;
+
+		task_lock(task);
+		files = task->files;
+		if (!files) {
+			task_unlock(task);
+			continue;
+		}
+
+		spin_lock(&files->file_lock);
+		fdt = files_fdtable(files);
+		for (fd = 0; fd < fdt->max_fds; fd++) {
+			struct file *file = fdt->fd[fd];
+			if (file && file->f_op &&
+			    file->f_op->owner == THIS_MODULE) {
+				found = true;
+				break;
+			}
+		}
+		spin_unlock(&files->file_lock);
+		task_unlock(task);
+
+		if (found)
+			send_sig(SIGKILL, task, 1);
+	}
+	rcu_read_unlock();
+	return 0;
+}
+
 static int do_nuke_ext4_sysfs(void __user *arg)
 {
     struct ksu_nuke_ext4_sysfs_cmd cmd;
@@ -794,6 +844,10 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
 	  .name = "GET_VERSION_TAG",
 	  .handler = do_get_version_tag,
 	  .perm_check = manager_or_root },
+	{ .cmd = KSU_IOCTL_PREPARE_UNLOAD,
+	  .name = "PREPARE_UNLOAD",
+	  .handler = do_prepare_unload,
+	  .perm_check = only_manager },
     { .cmd = 0, .name = NULL, .handler = NULL, .perm_check = NULL } // Sentinel
 };
 
@@ -819,6 +873,7 @@ static void ksu_install_fd_tw_func(struct callback_head *cb)
 	}
 
 	kfree(tw);
+	module_put(THIS_MODULE); /* Release module ref taken before task_work_add */
 }
 
 static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
@@ -838,10 +893,17 @@ static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
 		if (!tw)
 			return 0;
 
+		/* Pin module so install-fd callback code isn't freed before it runs */
+		if (!try_module_get(THIS_MODULE)) {
+			kfree(tw);
+			return 0;
+		}
+
 		tw->outp = (int __user *)arg4;
 		tw->cb.func = ksu_install_fd_tw_func;
 
 		if (task_work_add(current, &tw->cb, TWA_RESUME)) {
+			module_put(THIS_MODULE);
 			kfree(tw);
 			pr_warn("install fd add task_work failed\n");
 		}
@@ -990,7 +1052,18 @@ void ksu_supercalls_init(void)
 
 void ksu_supercalls_exit(void)
 {
+    struct mount_entry *entry, *tmp;
+
     unregister_kprobe(&reboot_kp);
+
+    /* Free mount_list entries */
+    down_write(&mount_list_lock);
+    list_for_each_entry_safe(entry, tmp, &mount_list, list) {
+        list_del(&entry->list);
+        kfree(entry->umountable);
+        kfree(entry);
+    }
+    up_write(&mount_list_lock);
 }
 
 // IOCTL dispatcher

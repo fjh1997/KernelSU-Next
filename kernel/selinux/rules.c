@@ -97,6 +97,103 @@ void apply_kernelsu_rules()
     mutex_unlock(&ksu_rules);
 }
 
+static void reset_avc_cache();
+
+void revert_kernelsu_rules()
+{
+	struct policydb *db;
+
+	mutex_lock(&ksu_rules);
+
+	db = get_policydb();
+
+	/*
+	 * We cannot safely remove the "su" type from policydb because
+	 * type_val_to_struct is indexed by type value; removing an entry
+	 * would corrupt all higher-valued types. Instead, we:
+	 * 1. Set su domain back to enforcing
+	 * 2. Clear all allow rules where su is the source type
+	 * 3. Clear the permissive bit for su
+	 * This effectively makes su a dead domain with zero permissions.
+	 */
+
+	/* 1. Make su enforcing (remove from permissive_map) */
+	ksu_enforce(db, KERNEL_SU_DOMAIN);
+
+	/* 2. Clear all avtab entries where su is the source */
+	struct type_datum *su_type = symtab_search(&db->p_types, KERNEL_SU_DOMAIN);
+	if (su_type) {
+		u32 su_val = su_type->value;
+		struct avtab_node *cur;
+		struct avtab_node *prev;
+		int i;
+
+		for (i = 0; i < db->te_avtab.nslot; i++) {
+			prev = NULL;
+			cur = db->te_avtab.htable[i];
+			while (cur) {
+				if (cur->key.source_type == su_val) {
+					/* Zero the permission data instead of unlinking
+					 * (safer: avoids corrupting the hashtable chain) */
+					if (cur->key.specified & AVTAB_XPERMS) {
+						if (cur->datum.u.xperms)
+							memset(cur->datum.u.xperms->perms.p, 0,
+							       sizeof(cur->datum.u.xperms->perms.p));
+					} else {
+						cur->datum.u.data = 0U;
+					}
+				}
+				cur = cur->next;
+			}
+		}
+	}
+
+	/* 3. Also clear allow rules where su is the target (other domains -> su) */
+	if (su_type) {
+		u32 su_val = su_type->value;
+		struct avtab_node *cur;
+		int i;
+
+		for (i = 0; i < db->te_avtab.nslot; i++) {
+			cur = db->te_avtab.htable[i];
+			while (cur) {
+				if (cur->key.target_type == su_val &&
+				    (cur->key.specified & AVTAB_ALLOWED)) {
+					cur->datum.u.data = 0U;
+				}
+				cur = cur->next;
+			}
+		}
+	}
+
+	/* 4. Also handle ksu_file type */
+	struct type_datum *ksu_file_type = symtab_search(&db->p_types, KERNEL_SU_FILE);
+	if (ksu_file_type) {
+		u32 kf_val = ksu_file_type->value;
+		struct avtab_node *cur;
+		int i;
+
+		for (i = 0; i < db->te_avtab.nslot; i++) {
+			cur = db->te_avtab.htable[i];
+			while (cur) {
+				if ((cur->key.source_type == kf_val ||
+				     cur->key.target_type == kf_val) &&
+				    (cur->key.specified & AVTAB_ALLOWED)) {
+					cur->datum.u.data = 0U;
+				}
+				cur = cur->next;
+			}
+		}
+	}
+
+	mutex_unlock(&ksu_rules);
+
+	/* Reset AVC cache so cleared rules take effect immediately */
+	reset_avc_cache();
+
+	pr_info("KernelSU: SELinux rules reverted\n");
+}
+
 #define MAX_SEPOL_LEN 128
 
 #define CMD_NORMAL_PERM 1

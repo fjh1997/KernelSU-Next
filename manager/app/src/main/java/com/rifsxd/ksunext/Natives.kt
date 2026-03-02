@@ -115,6 +115,16 @@ object Natives {
     external fun isAvcSpoofEnabled(): Boolean
     external fun setAvcSpoofEnabled(enabled: Boolean): Boolean
 
+    /**
+     * Kill all processes holding KSU fds (ksu_driver + fdwrapper) to prepare for rmmod.
+     */
+    external fun prepareUnload(): Boolean
+
+    /**
+     * Close the cached KSU driver fd so the module refcount drops to allow rmmod.
+     */
+    external fun closeDriverFd()
+
     external fun getSuperuserCount(): Int
 
     private const val NON_ROOT_DEFAULT_PROFILE_KEY = "$"

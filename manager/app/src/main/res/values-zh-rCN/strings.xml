@@ -186,6 +186,7 @@
   <string name="settings_uninstall_permanent">永久卸载</string>
   <string name="settings_restore_stock_image">恢复原厂镜像</string>
   <string name="settings_uninstall_temporary_message">临时卸载 KernelSU Next，下次重启后恢复。</string>
+  <string name="settings_uninstall_temporary_ui_warning">⚠️ 警告：所有持有 root 权限的进程（如 adb su 终端）将被强制终止！\n\n⚠️ 界面（UI）会重启，过程中可能短暂出现开机 Logo。</string>
   <string name="flashing">刷写中</string>
   <string name="flash_success">刷写成功</string>
   <string name="flash_failed">刷写失败</string>

@@ -1,4 +1,5 @@
 #include <linux/sched.h>
+#include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/task_work.h>
 #include <linux/cred.h>
@@ -9,6 +10,7 @@
 #include <linux/path.h>
 #include <linux/printk.h>
 #include <linux/types.h>
+
 
 #include "kernel_umount.h"
 #include "klog.h" // IWYU pragma: keep
@@ -89,6 +91,7 @@ static void umount_tw_func(struct callback_head *cb)
 	revert_creds(saved);
 
 	kfree(tw);
+	module_put(THIS_MODULE); /* Release module ref taken before task_work_add */
 }
 
 int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
@@ -138,15 +141,59 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 	if (!tw)
 		return 0;
 
+	/* Pin module so umount callback code isn't freed before it runs */
+	if (!try_module_get(THIS_MODULE)) {
+		kfree(tw);
+		return 0;
+	}
+
 	tw->cb.func = umount_tw_func;
 
 	int err = task_work_add(current, &tw->cb, TWA_RESUME);
 	if (err) {
+		module_put(THIS_MODULE);
 		kfree(tw);
 		pr_warn("unmount add task_work failed\n");
 	}
 
 	return 0;
+}
+
+
+
+void ksu_umount_all(void)
+{
+	struct mount_entry *entry;
+	const struct cred *saved;
+
+	if (!ksu_module_mounted) {
+		pr_info("ksu_umount_all: no modules mounted, skip\n");
+		return;
+	}
+
+	if (!ksu_cred) {
+		pr_warn("ksu_umount_all: no ksu_cred, cannot umount\n");
+		return;
+	}
+
+	saved = override_creds(ksu_cred);
+
+	/* Step 1: unmount paths from the registered mount list */
+	down_read(&mount_list_lock);
+	list_for_each_entry(entry, &mount_list, list) {
+		pr_info("ksu_umount_all: list: %s flags 0x%x\n",
+			entry->umountable, entry->flags);
+		try_umount(entry->umountable, entry->flags);
+	}
+	up_read(&mount_list_lock);
+
+	/* Third-party module mounts (Zygisk, LSPosed, MoveCertificate, etc.)
+	 * are handled by the Manager App's user-space cleanup script. */
+
+	revert_creds(saved);
+
+	ksu_module_mounted = false;
+	pr_info("ksu_umount_all: done\n");
 }
 
 void ksu_kernel_umount_init(void)

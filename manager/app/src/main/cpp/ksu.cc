@@ -239,3 +239,16 @@ const char* get_version_tag(void)
 bool is_zygisk_enabled() {
     return !!getenv("ZYGISK_ENABLED");
 }
+
+/* Ask kernel to SIGKILL all processes holding KSU fds, preparing for rmmod */
+bool prepare_unload() {
+    return ksuctl(KSU_IOCTL_PREPARE_UNLOAD) == 0;
+}
+
+/* Close the cached driver fd so module refcount drops to allow rmmod */
+void close_driver_fd() {
+    if (fd >= 0) {
+        close(fd);
+        fd = -1;
+    }
+}

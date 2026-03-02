@@ -579,19 +579,72 @@ fun UninstallItem(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val uninstallConfirmDialog = rememberConfirmDialog()
-    val showTodo = {
-        Toast.makeText(context, "TODO", Toast.LENGTH_SHORT).show()
-    }
     val uninstallDialog = rememberUninstallDialog { uninstallType ->
         scope.launch {
             val result = uninstallConfirmDialog.awaitConfirm(
                 title = context.getString(uninstallType.title),
-                content = context.getString(uninstallType.message)
+                content = if (uninstallType == UninstallType.TEMPORARY) {
+                    context.getString(uninstallType.message) + "\n\n" + context.getString(R.string.settings_uninstall_temporary_ui_warning)
+                } else {
+                    context.getString(uninstallType.message)
+                }
             )
             if (result == ConfirmResult.Confirmed) {
                 withLoading {
                     when (uninstallType) {
-                        UninstallType.TEMPORARY -> showTodo()
+                        UninstallType.TEMPORARY -> {
+                            withContext(Dispatchers.IO) {
+                                // Kill all processes holding KSU fds (adb su, zygiskd, etc.)
+                                Natives.prepareUnload()
+                                // Close manager's own driver fd to release module refcount
+                                Natives.closeDriverFd()
+                                withNewRootShell(globalMnt = true) {
+                                    newJob().add(
+                                        """
+                                        # Unmount KSU module overlays and Zygisk manual mounts (using mountinfo to catch bind mounts)
+                                        cat /proc/1/mountinfo | grep -E '(/data/adb|/adb/|KSU|KSUNext)' | awk '{print ${'$'}5}' | grep -E '^/(system|vendor|product|system_ext|bionic|apex|data/adb|adb)' | sort -r | while IFS= read -r mnt; do
+                                            umount -l "${'$'}mnt" 2>/dev/null
+                                        done
+                                        # Failsafe for Zygisk Next manual mounts (which may use anonymous tmpfs)
+                                        umount -l /system/bin/app_process32 2>/dev/null
+                                        umount -l /system/bin/app_process64 2>/dev/null
+                                        killall -9 zygiskd 2>/dev/null
+                                        
+                                        # Failsafe for Certificate Modules (e.g. MoveCertificate)
+                                        # These mount anonymous tmpfs over APEX cert dirs.
+                                        # We only unmount if fs type is tmpfs (native APEX uses erofs/ext4).
+                                        # mountinfo has variable optional-tag fields, so we split on ' - ' to find fs type reliably.
+                                        cat /proc/1/mountinfo | while IFS= read -r line; do
+                                            mp=${'$'}(echo "${'$'}line" | awk '{print ${'$'}5}')
+                                            case "${'$'}mp" in
+                                                /apex/com.android.conscrypt*/cacerts)
+                                                    fstype=${'$'}(echo "${'$'}line" | sed 's/.* - //' | awk '{print ${'$'}1}')
+                                                    if [ "${'$'}fstype" = "tmpfs" ]; then
+                                                        umount -l "${'$'}mp" 2>/dev/null
+                                                    fi
+                                                    ;;
+                                            esac
+                                        done
+                                        # Daemonize: close inherited ksu fds, then rmmod.
+                                        # Zygote kill is handled by kernelsu_exit() -> ksu_kill_zygote()
+                                        # in the kernel, between umount cleanup and SELinux revert.
+                                        (
+                                          exec 0</dev/null 1>/dev/null 2>/dev/null
+                                          for fd in ${'$'}(ls /proc/self/fd/ 2>/dev/null); do
+                                            [ "${'$'}fd" -gt 2 ] && eval "exec ${'$'}fd>&-" 2>/dev/null
+                                          done
+                                          n=0; while [ ${'$'}n -lt 30 ]; do
+                                            rmmod kernelsu 2>/dev/null && break
+                                            sleep 1; n=${'$'}((n+1))
+                                          done
+                                        ) &
+                                        """.trimIndent()
+                                    ).exec()
+                                }
+                            }
+                            // Kill manager so it restarts and shows correct status
+                            android.os.Process.killProcess(android.os.Process.myPid())
+                        }
                         UninstallType.PERMANENT -> navigator.navigate(
                             FlashScreenDestination(FlashIt.FlashUninstall)
                         )
@@ -647,11 +700,14 @@ enum class UninstallType(val title: Int, val message: Int, val icon: ImageVector
 @Composable
 fun rememberUninstallDialog(onSelected: (UninstallType) -> Unit): DialogHandle {
     return rememberCustomDialog { dismiss ->
-        val options = listOf(
-            // UninstallType.TEMPORARY,
-            UninstallType.PERMANENT,
-            UninstallType.RESTORE_STOCK_IMAGE
-        )
+        val options = buildList {
+            // Temporary unload only available in LKM mode (rmmod)
+            if (Natives.isLkmMode) {
+                add(UninstallType.TEMPORARY)
+            }
+            add(UninstallType.PERMANENT)
+            add(UninstallType.RESTORE_STOCK_IMAGE)
+        }
         val listOptions = options.map {
             ListOption(
                 titleText = stringResource(it.title),
